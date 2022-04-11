@@ -4,13 +4,13 @@ use akula::{
 };
 use async_trait::async_trait;
 use ethers::{
-    core::types::{Address, Block, BlockId, BlockNumber, NameOrAddress, TxHash, U256, U64},
+    core::types::{Address, Block, BlockId, BlockNumber, NameOrAddress, TxHash, H256, U256, U64},
     providers::{maybe, FromErr, Middleware, PendingTransaction, ProviderError},
 };
 use eyre::{eyre, Result};
 use fastrlp::Decodable;
 use mdbx::EnvironmentKind;
-use std::{path::PathBuf, sync::Arc};
+use std::{borrow::Borrow, path::PathBuf, sync::Arc};
 use thiserror::Error;
 
 use crate::account::Account;
@@ -35,6 +35,11 @@ impl<M, E: EnvironmentKind> Db<M, E> {
             db: Arc::new(db),
         })
     }
+
+    pub fn get_account(&self, who: Address) -> anyhow::Result<Option<Account>> {
+        let tx = self.db.begin()?;
+        tx.get(crate::tables::PlainState, who)
+    }
 }
 
 impl<M, E> Db<M, E>
@@ -42,15 +47,6 @@ where
     M: Middleware,
     E: EnvironmentKind,
 {
-    pub fn get_account(
-        &self,
-        who: Address,
-    ) -> Result<Option<Account>, <Self as Middleware>::Error> {
-        let tx = self.db.begin()?;
-        let raw = tx.get(crate::tables::PlainState, who)?.unwrap_or_default();
-        Account::decode_for_storage(&raw).map_err(From::from)
-    }
-
     async fn get_address<T: Into<NameOrAddress>>(
         &self,
         who: T,
@@ -111,8 +107,8 @@ where
         let tx = self.db.begin()?;
         let hash = tx
             .get(
-                crate::tables::LastBlock,
-                String::from("LastBlock").into_bytes(),
+                crate::tables::LastHeader,
+                String::from("LastHeader").into_bytes(),
             )?
             .ok_or(DbError::BadError)?;
         let num = tx
@@ -143,6 +139,31 @@ where
         Ok(self
             .get_account(who)?
             .map_or_else(|| Default::default(), |acct| acct.nonce.into()))
+    }
+
+    async fn get_storage_at<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        from: T,
+        location: H256,
+        block: Option<BlockId>,
+    ) -> Result<H256, Self::Error> {
+        assert!(block.is_none(), "no history handling yet");
+        let tx = self.db.begin()?;
+        let who = self.get_address(from).await?;
+        let acct = self
+            .get_account(who)
+            .map_err::<anyhow::Error, _>(From::from)?
+            .unwrap_or_default();
+        let bucket = crate::tables::StorageBucket::new(who, acct.incarnation);
+        let mut cur = tx.cursor(crate::tables::Storage).unwrap();
+
+        if let Some((k, v)) = cur.seek_both_range(bucket, location)? {
+            if k == location {
+                return Ok(v.to_be_bytes().into());
+            }
+        }
+
+        Ok(Default::default())
     }
 
     async fn get_block<T: Into<BlockId> + Send + Sync>(

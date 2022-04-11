@@ -2,13 +2,19 @@
 pragma solidity >=0.4.24;
 
 contract Store {
-    uint256 public count;
+    uint256 public slot0;
+    uint256 public slot1;
+    uint256 public slot2;
 
     constructor() {
-        count = 1;
+        slot0 = 2;
+        slot1 = 3;
+        slot2 = type(uint256).max;
     }
 
     function inc() external {
-        count++;
+        slot0++;
+        slot1++;
+        slot2++;
     }
 }
