@@ -28,6 +28,21 @@ mod tests {
         dbg!(bal);
     }
 
+    #[test]
+    pub fn test_get_account() {
+        let base_dir = std::env::current_dir().unwrap();
+        let data_dir = base_dir.join("data");
+
+        let dst: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2"
+            .parse()
+            .unwrap();
+
+        let provider = Provider::new(MockProvider::new());
+        let db: Db<_, NoWriteMap> = Db::new(provider, data_dir).expect("bad db path");
+        let acct = db.get_account(dst).unwrap();
+        dbg!(acct);
+    }
+
     // #[tokio::test]
     // async fn test_get_block_number() {
     //     let base_dir = std::env::current_dir().unwrap();

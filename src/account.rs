@@ -21,7 +21,7 @@ pub struct Account {
     pub codehash: H256, // hash of the bytecode
 }
 
-pub fn parse_u64_with_len(mut enc: &[u8]) -> u64 {
+pub fn parse_u64_with_len(enc: &mut &[u8]) -> u64 {
     let len = enc.get_u8().into();
     let val = bytes_to_u64(&enc[..len]);
     enc.advance(len);
@@ -40,7 +40,7 @@ impl Account {
 
         // has nonce
         if fieldset & 1 > 0 {
-            acct.nonce = parse_u64_with_len(enc);
+            acct.nonce = parse_u64_with_len(&mut enc);
         }
 
         // has balance
@@ -52,7 +52,7 @@ impl Account {
 
         // has incarnation
         if fieldset & 4 > 0 {
-            acct.incarnation = parse_u64_with_len(enc);
+            acct.incarnation = parse_u64_with_len(&mut enc);
         }
 
         // has codehash
@@ -66,6 +66,7 @@ impl Account {
                 );
             }
             acct.codehash = H256::from_slice(&enc[..HASH_LEN]);
+            enc.advance(HASH_LEN)
         }
 
         // TODO: erigon docs mention storage hash field, code seems to disagree

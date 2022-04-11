@@ -1,5 +1,5 @@
 use crate::k256::ecdsa::SigningKey;
-use ethers::prelude::*;
+use ethers::{contract::Contract, prelude::*, solc::Solc, utils::format_ether};
 use eyre::eyre;
 
 #[tokio::main]
@@ -12,19 +12,63 @@ async fn main() {
     let provider = Provider::<Http>::try_from(endpoint)
         .map_err(|e| eyre!("Could not establish provider: {}", e))
         .unwrap();
-    let chainid = provider.get_chainid().await.unwrap().as_u32() as u16;
-
+    let client = std::sync::Arc::new(provider);
+    let chainid = client.get_chainid().await.unwrap().as_u32() as u16;
+    // address: 0x67b1d87101671b127f5f8714789C7192f7ad340e
     let src: Wallet<SigningKey> =
         "26e86e45f6fc45ec6e2ecd128cec80fa1d1505e5507dcd2ae58c3130a7a97b48"
             .parse()
             .unwrap();
     dbg!(src.address());
     let src = src.with_chain_id(chainid);
-    let signer = SignerMiddleware::new(provider, src);
+    let signer = SignerMiddleware::new(client.clone(), src);
 
+    let bal = client.get_balance(signer.address(), None).await.unwrap();
+    dbg!(format_ether(bal));
+
+    // // Send a transfer
     let tx = TransactionRequest::new().to(dst).value(100_usize);
-    let receipt = signer.send_transaction(tx, None).await.unwrap();
+    let receipt = signer
+        .send_transaction(tx, None)
+        .await
+        .unwrap()
+        .await
+        .unwrap();
     dbg!(receipt);
 
-    println!("foo");
+    // Deploy a contract
+    let compiled = Solc::default()
+        .compile_source("./contracts/Store.sol")
+        .unwrap();
+    let contract = compiled
+        .get("./contracts/Store.sol", "Store")
+        .expect("no contract");
+    let tx = TransactionRequest::new().data(contract.bin.unwrap().clone().into_bytes().unwrap());
+    let receipt = signer
+        .send_transaction(tx, None)
+        .await
+        .unwrap()
+        .await
+        .unwrap()
+        .unwrap();
+    //first deployed contract: 0x0d4c6c6605a729a379216c93e919711a081beba2
+    println!("Store address: {:?}", receipt.contract_address.unwrap());
+
+    //TODO: fac.deploy sends unreasonble max fee per gas
+    // let fac = ContractFactory::new(
+    //     contract.abi.unwrap().clone(),
+    //     contract.bin.unwrap().clone().into_bytes().unwrap(),
+    //     client,
+    // );
+    // let store = fac
+    //     .deploy(())
+    //     .unwrap()
+    //     .legacy()
+    //     .confirmations(0usize)
+    //     .send()
+    //     .await
+    //     .unwrap();
+
+    // let store = Contract::new(store.address(), *contract.abi.unwrap(), client);
+    // store.method::<(), ()>("inc", ()).unwrap().send().await.unwrap().await.unwrap();
 }

@@ -1,3 +1,6 @@
+use akula::models::H256;
+
+// Copied from akula
 #[macro_export]
 macro_rules! decl_table {
     ($name:ident => $key:ty => $value:ty => $seek_key:ty) => {
@@ -39,7 +42,6 @@ macro_rules! decl_table {
     };
 }
 
-use akula::models::H256;
 decl_table!(LastBlock => Vec<u8> => H256);
 decl_table!(LastHeader => Vec<u8> => H256);
 decl_table!(PlainState => akula::models::Address => Vec<u8>);

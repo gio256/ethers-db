@@ -3,8 +3,10 @@ use akula::{
     models::{BlockBody, BlockHeader},
 };
 use async_trait::async_trait;
-use ethers::core::types::{Address, Block, BlockId, BlockNumber, NameOrAddress, TxHash, U256, U64};
-use ethers::providers::{maybe, FromErr, Middleware, PendingTransaction, ProviderError};
+use ethers::{
+    core::types::{Address, Block, BlockId, BlockNumber, NameOrAddress, TxHash, U256, U64},
+    providers::{maybe, FromErr, Middleware, PendingTransaction, ProviderError},
+};
 use eyre::{eyre, Result};
 use fastrlp::Decodable;
 use mdbx::EnvironmentKind;
