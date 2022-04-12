@@ -5,7 +5,7 @@ use akula::{
         tables::HeaderKey,
         traits::TableEncode,
     },
-    models::{BlockHeader, BodyForStorage, Message},
+    models::{BlockHeader, BodyForStorage, Message, MessageWithSignature},
 };
 use anyhow::{bail, format_err, Result};
 use async_trait::async_trait;
@@ -25,6 +25,39 @@ pub static EMPTY_CODEHASH: Lazy<H256> = Lazy::new(|| ethers::utils::keccak256(ve
 
 // A wrapper type for an Erigon MdbxTransaction
 pub struct DbTx<'env, K: TransactionKind, E: EnvironmentKind>(MdbxTransaction<'env, K, E>);
+
+fn maybe_gas_price(msg: &MessageWithSignature) -> Option<ethers::types::U256> {
+    match msg.message {
+        Message::Legacy { gas_price, .. } | Message::EIP2930 { gas_price, .. } => {
+            Some(gas_price.to_be_bytes().into())
+        }
+        _ => None,
+    }
+}
+fn tx_type(msg: &MessageWithSignature) -> Option<ethers::types::U64> {
+    match msg.message {
+        Message::EIP2930 { .. } => Some(1.into()),
+        Message::EIP1559 { .. } => Some(2.into()),
+        _ => None,
+    }
+}
+fn access_list(
+    msg: &MessageWithSignature,
+) -> Option<ethers::types::transaction::eip2930::AccessList> {
+    match &msg.message {
+        Message::EIP2930 { access_list, .. } | Message::EIP1559 { access_list, .. } => Some(
+            access_list
+                .iter()
+                .map(|it| ethers::types::transaction::eip2930::AccessListItem {
+                    address: it.address,
+                    storage_keys: it.slots.clone(),
+                })
+                .collect::<Vec<_>>()
+                .into(),
+        ),
+        _ => None,
+    }
+}
 
 // Most of these methods come from https://github.com/ledgerwatch/erigon/blob/f56d4c5881822e70f65927ade76ef05bfacb1df4/core/rawdb/accessors_chain.go
 impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
@@ -90,8 +123,13 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
             .map_err(|e| format_err!("BodyForStorage decode error: {}", e))?;
 
         // https://github.com/ledgerwatch/erigon/blob/f56d4c5881822e70f65927ade76ef05bfacb1df4/core/rawdb/accessors_chain.go#L602-L605
+        // Skip 1 system tx in the beginning of the block and 1 at the end
         if body.tx_amount < 2 {
-            bail!("block body has too few txs: {}", body.tx_amount)
+            bail!(
+                "block body has too few txs: {}. HeaderKey: {:?}",
+                body.tx_amount,
+                key
+            )
         }
         body.base_tx_id.0 += 1;
         body.tx_amount -= 2;
@@ -99,6 +137,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
         Ok(body)
     }
 
+    /// Returns the number of the block containing the specified transaction.
     pub fn read_transaction_block_number(
         &mut self,
         hash: H256,
@@ -115,18 +154,17 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
         Ok(num.as_u64().into())
     }
 
+    /// Returns an iterator over the `n` transactions beginning at `start_key`.
     pub fn read_transactions(
         &mut self,
-        body: &BodyForStorage,
-    ) -> Result<impl Iterator<Item = akula::models::MessageWithSignature>> {
-        let tx_amount = usize::try_from(body.tx_amount)?;
-
-        // Note: BlockTransaction is EthTx in erigon
-        // https://github.com/ledgerwatch/erigon-lib/blob/da0666bd83faf7879a2a0c2a814a94965f78883b/kv/tables.go#L227
+        start_key: u64,
+        n: u64,
+    ) -> Result<impl Iterator<Item = MessageWithSignature>> {
+        // Note: The BlockTransaction table is called "EthTx" in erigon
         Ok(self
             .0
             .cursor(tables::BlockTransaction.erased())?
-            .walk(Some(body.base_tx_id.encode().to_vec()))
+            .walk(Some(start_key.encode().to_vec()))
             .flat_map(|res| {
                 res.and_then(|(_, tx)| {
                     Ok(<akula::models::MessageWithSignature as Decodable>::decode(
@@ -134,7 +172,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
                     )?)
                 })
             })
-            .take(tx_amount))
+            .take(n.try_into()?))
     }
 
     /// Returns the hash assigned to a canonical block number.
@@ -339,7 +377,7 @@ where
         let body = dbtx.read_body_for_storage(header_key)?;
 
         let txs = dbtx
-            .read_transactions(&body)?
+            .read_transactions(body.base_tx_id.0, body.tx_amount)?
             .map(|msg| msg.hash())
             .collect::<Vec<_>>();
 
@@ -385,6 +423,92 @@ where
             // TODO:
             // seal_fields
             //size
+            ..Default::default()
+        };
+        Ok(Some(block))
+    }
+
+    async fn get_block_with_txs<T: Into<BlockId> + Send + Sync>(
+        &self,
+        block_hash_or_number: T,
+    ) -> Result<Option<Block<ethers::types::Transaction>>, Self::Error> {
+        let mut dbtx = DbTx::new(self.db.begin()?);
+
+        let header_key = dbtx.get_header_key(block_hash_or_number)?;
+        let (block_num, block_hash) = header_key;
+
+        let header = dbtx.read_header(header_key)?;
+        let body = dbtx.read_body_for_storage(header_key)?;
+
+        let txs = dbtx
+            .read_transactions(body.base_tx_id.0, body.tx_amount)?
+            .scan(0_u64, |idx, msg| {
+                let tx = ethers::types::Transaction {
+                    hash: msg.hash(),
+                    nonce: msg.nonce().into(),
+                    block_hash: Some(block_hash),
+                    block_number: Some(block_num.0.into()),
+                    transaction_index: Some((*idx).into()),
+                    from: msg.recover_sender().expect("bad sig"), //TODO: erigon has a separate table they merge instead
+                    to: msg.action().into_address(),
+                    value: msg.value().to_be_bytes().into(),
+                    gas_price: maybe_gas_price(&msg),
+                    gas: msg.gas_limit().into(),
+                    input: msg.input().clone().into(),
+                    v: msg.v().into(),
+                    r: msg.r().to_fixed_bytes().into(),
+                    s: msg.s().to_fixed_bytes().into(),
+                    transaction_type: tx_type(&msg),
+                    access_list: access_list(&msg),
+                    chain_id: msg.chain_id().map(|id| id.0.into()),
+
+                    //TODO: should these be None for legacy txs?
+                    max_priority_fee_per_gas: Some(msg.max_priority_fee_per_gas().to_be_bytes().into()),
+                    max_fee_per_gas: Some(msg.max_fee_per_gas().to_be_bytes().into()),
+                };
+                *idx += 1;
+                Some(tx)
+            })
+            .collect::<Vec<_>>();
+
+        if txs.len() as u64 != body.tx_amount {
+            return Err(
+                format_err!("Unexpected number of transactions in block {}.", block_num).into(),
+            );
+        }
+
+        let ommer_hashes = body
+            .uncles
+            .iter()
+            .map(|header| {
+                let (_, hash) = dbtx
+                    .get_header_key(header.number.0)
+                    .expect("no match for ommer");
+                hash
+            })
+            .collect();
+
+        let block = Block {
+            hash: Some(block_hash),
+            parent_hash: header.parent_hash,
+            uncles_hash: header.ommers_hash,
+            author: header.beneficiary,
+            state_root: header.state_root,
+            transactions_root: header.transactions_root,
+            receipts_root: header.receipts_root,
+            number: Some(block_num.0.into()),
+            gas_used: header.gas_used.into(),
+            gas_limit: header.gas_limit.into(),
+            extra_data: header.extra_data.into(),
+            logs_bloom: Some(header.logs_bloom),
+            timestamp: header.timestamp.into(),
+            difficulty: header.difficulty.to_be_bytes().into(),
+            total_difficulty: None, // TODO
+            uncles: ommer_hashes,
+            transactions: txs,
+            mix_hash: Some(header.mix_hash),
+            nonce: Some(header.nonce.to_fixed_bytes().into()),
+            base_fee_per_gas: header.base_fee_per_gas.map(|f| f.to_be_bytes().into()),
             ..Default::default()
         };
         Ok(Some(block))

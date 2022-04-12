@@ -90,4 +90,23 @@ mod tests {
         let code = dbtx.read_code(acct.codehash).unwrap();
         dbg!(code);
     }
+
+    #[tokio::test]
+    async fn test_transactions() {
+        let db = get_db();
+        let txs = db.get_block(0).await.unwrap().unwrap().transactions;
+        dbg!(txs.clone());
+        let txs = db.get_block(1).await.unwrap().unwrap().transactions;
+        dbg!(txs.clone());
+        let txs = db.get_block(2).await.unwrap().unwrap().transactions;
+        dbg!(txs.clone());
+        let txs = db.get_block(3).await.unwrap().unwrap().transactions;
+        dbg!(txs);
+        let txs = db.get_block(4).await.unwrap().unwrap().transactions;
+        dbg!(txs);
+
+        // let mut dbtx = DbTx::new(MDBX.begin().unwrap());
+        // let res = dbtx.read_transaction_block_number(txs[1]).unwrap();
+        // dbg!(res);
+    }
 }
