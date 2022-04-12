@@ -7,7 +7,7 @@ use akula::{
     },
     models::{BlockBody, BlockHeader, BodyForStorage, Message},
 };
-use anyhow::{bail, format_err};
+use anyhow::{Result, bail, format_err};
 use async_trait::async_trait;
 use ethers::{
     core::types::{
@@ -15,7 +15,6 @@ use ethers::{
     },
     providers::{maybe, FromErr, Middleware, PendingTransaction, ProviderError},
 };
-use eyre::{eyre, Result};
 use fastrlp::Decodable;
 use mdbx::EnvironmentKind;
 use std::{borrow::Borrow, path::PathBuf, sync::Arc};
@@ -33,7 +32,7 @@ pub struct Db<M, E: EnvironmentKind> {
     db: Arc<MdbxEnvironment<E>>,
 }
 
-pub fn open_db<E: EnvironmentKind>(chaindata_dir: PathBuf) -> anyhow::Result<MdbxEnvironment<E>> {
+pub fn open_db<E: EnvironmentKind>(chaindata_dir: PathBuf) -> Result<MdbxEnvironment<E>> {
     MdbxEnvironment::<E>::open_ro(
         mdbx::Environment::new(),
         &chaindata_dir,
@@ -43,7 +42,7 @@ pub fn open_db<E: EnvironmentKind>(chaindata_dir: PathBuf) -> anyhow::Result<Mdb
 }
 
 impl<M, E: EnvironmentKind> Db<M, E> {
-    pub fn open_new(inner: M, chaindata_dir: PathBuf) -> anyhow::Result<Self> {
+    pub fn open_new(inner: M, chaindata_dir: PathBuf) -> Result<Self> {
         let db = open_db(chaindata_dir)?;
         Ok(Self {
             inner,
@@ -59,7 +58,7 @@ impl<M, E: EnvironmentKind> Db<M, E> {
         &self,
         tx: &mut MdbxTransaction<'_, mdbx::RO, E>,
         who: Address,
-    ) -> anyhow::Result<Account> {
+    ) -> Result<Account> {
         tx.get(crate::tables::PlainState, who)
             .map(|res| res.unwrap_or_default())
     }
@@ -68,7 +67,7 @@ impl<M, E: EnvironmentKind> Db<M, E> {
     pub fn read_head_header_hash(
         &self,
         tx: &mut MdbxTransaction<'_, mdbx::RO, E>,
-    ) -> anyhow::Result<H256> {
+    ) -> Result<H256> {
         tx.get(
             crate::tables::LastHeader,
             String::from("LastHeader").into_bytes(),
@@ -80,7 +79,7 @@ impl<M, E: EnvironmentKind> Db<M, E> {
         &self,
         tx: &mut MdbxTransaction<'_, mdbx::RO, E>,
         hash: H256,
-    ) -> anyhow::Result<akula::models::BlockNumber> {
+    ) -> Result<akula::models::BlockNumber> {
         tx.get(tables::HeaderNumber, hash)
             .map(|res| res.unwrap_or_default())
     }
@@ -89,7 +88,7 @@ impl<M, E: EnvironmentKind> Db<M, E> {
         &self,
         tx: &mut MdbxTransaction<'_, mdbx::RO, E>,
         key: HeaderKey,
-    ) -> anyhow::Result<BlockHeader> {
+    ) -> Result<BlockHeader> {
         let raw_header = tx
             .get(akula::kv::tables::Header.erased(), key.encode().to_vec())?
             .ok_or_else(|| format_err!("cant find header"))?;
@@ -101,7 +100,7 @@ impl<M, E: EnvironmentKind> Db<M, E> {
         &self,
         tx: &mut MdbxTransaction<'_, mdbx::RO, E>,
         key: HeaderKey,
-    ) -> anyhow::Result<BodyForStorage> {
+    ) -> Result<BodyForStorage> {
         let raw_body = tx
             .get(tables::BlockBody.erased(), key.encode().to_vec())?
             .ok_or_else(|| format_err!("cant find body"))?;
@@ -116,7 +115,7 @@ impl<M, E: EnvironmentKind> Db<M, E> {
         &self,
         dbtx: &mut MdbxTransaction<'_, mdbx::RO, E>,
         body: &BodyForStorage,
-    ) -> anyhow::Result<impl Iterator<Item = Message>> {
+    ) -> Result<impl Iterator<Item = Message>> {
         let tx_amount = usize::try_from(body.tx_amount)
             .map_err(|e| format_err!("Bad BodyForStorage tx_amount: {}", e))?;
 
@@ -285,7 +284,7 @@ where
             .collect::<Vec<_>>();
 
         if txs.len() as u64 != body.tx_amount {
-            return Err(eyre!("Unexpected number of transactions in block {}.", block_num).into());
+            return Err(format_err!("Unexpected number of transactions in block {}.", block_num).into())
         }
 
         let ommer_hashes = body
@@ -338,9 +337,6 @@ pub enum DbError<M: Middleware> {
     #[error("{0}")]
     Anyhow(anyhow::Error),
 
-    #[error("{0}")]
-    Eyre(eyre::ErrReport),
-
     // placeholder error
     #[error("BadAccess")]
     BadError,
@@ -354,10 +350,5 @@ impl<M: Middleware> FromErr<M::Error> for DbError<M> {
 impl<M: Middleware> From<anyhow::Error> for DbError<M> {
     fn from(src: anyhow::Error) -> DbError<M> {
         DbError::Anyhow(src)
-    }
-}
-impl<M: Middleware> From<eyre::ErrReport> for DbError<M> {
-    fn from(src: eyre::ErrReport) -> DbError<M> {
-        DbError::Eyre(src)
     }
 }

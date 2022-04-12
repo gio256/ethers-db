@@ -61,11 +61,11 @@ impl akula::kv::traits::TableDecode for Account {
         Ok(acct)
     }
 }
+//TODO
 impl akula::kv::traits::TableEncode for Account {
     type Encoded = Vec<u8>;
     fn encode(self) -> Self::Encoded {
-        let mut out = Self::Encoded::default();
-        out
+        Self::Encoded::default()
     }
 }
 

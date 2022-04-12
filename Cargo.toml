@@ -14,7 +14,6 @@ path = "src/txgen.rs"
 
 [dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs" }
-eyre = "0.6"
 tokio = { version = "1.5", features = ["macros", "rt-multi-thread"] }
 async-trait = { version = "0.1.50", default-features = false }
 thiserror = { version = "1.0.30", default-features = false }

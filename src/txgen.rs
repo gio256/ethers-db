@@ -1,6 +1,6 @@
 use crate::k256::ecdsa::SigningKey;
-use ethers::{contract::Contract, prelude::*, solc::Solc, utils::format_ether};
-use eyre::eyre;
+use ethers::{prelude::*, solc::Solc, utils::format_ether};
+use anyhow::format_err;
 
 #[tokio::main]
 async fn main() {
@@ -10,7 +10,7 @@ async fn main() {
 
     let endpoint = "http://localhost:8545";
     let provider = Provider::<Http>::try_from(endpoint)
-        .map_err(|e| eyre!("Could not establish provider: {}", e))
+        .map_err(|e| format_err!("Could not establish provider: {}", e))
         .unwrap();
     let client = std::sync::Arc::new(provider);
     let chainid = client.get_chainid().await.unwrap().as_u32() as u16;
