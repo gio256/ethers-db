@@ -1,20 +1,14 @@
-#![allow(unused_imports)]
-
 pub mod db;
 
 mod account;
 mod tables;
-
-//@gio-scratch bug notes
-//- db.begin() is throwing "Resource temporarily unavailable", even
-// with no actual tx.get's.
 
 #[cfg(test)]
 mod tests {
     use super::db::*;
     use akula::kv::mdbx::MdbxEnvironment;
     use ethers::{
-        core::types::{Address, H256, U64},
+        core::types::{Address, H256},
         providers::{Middleware, MockProvider, Provider},
     };
     use mdbx::NoWriteMap;

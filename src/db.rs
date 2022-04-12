@@ -5,24 +5,23 @@ use akula::{
         tables::HeaderKey,
         traits::TableEncode,
     },
-    models::{BlockBody, BlockHeader, BodyForStorage, Message},
+    models::{BlockHeader, BodyForStorage, Message},
 };
-use anyhow::{bail, format_err, Result};
+use anyhow::{format_err, Result};
 use async_trait::async_trait;
 use ethers::{
-    core::types::{Address, Block, BlockId, NameOrAddress, Transaction, TxHash, H256, U256, U64},
-    providers::{maybe, FromErr, Middleware, PendingTransaction, ProviderError},
+    core::types::{Address, Block, BlockId, NameOrAddress, TxHash, H256, U256, U64},
+    providers::{FromErr, Middleware},
 };
 use fastrlp::Decodable;
 use mdbx::{EnvironmentKind, TransactionKind};
-use std::{borrow::Borrow, path::PathBuf, sync::Arc};
-use thiserror::Error;
 use once_cell::sync::Lazy;
+use std::{path::PathBuf, sync::Arc};
+use thiserror::Error;
 
 use crate::account::Account;
 
 pub static EMPTY_CODEHASH: Lazy<H256> = Lazy::new(|| ethers::utils::keccak256(vec![]).into());
-
 
 // A wrapper type for an Erigon MdbxTransaction
 pub struct DbTx<'env, K: TransactionKind, E: EnvironmentKind>(MdbxTransaction<'env, K, E>);
@@ -111,7 +110,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
             .0
             .cursor(tables::BlockTransaction.erased())?
             .walk(Some(body.base_tx_id.encode().to_vec()))
-            .map(|res| {
+            .flat_map(|res| {
                 res.and_then(|(_, tx)| {
                     Ok(
                         <akula::models::MessageWithSignature as Decodable>::decode(&mut &*tx)?
@@ -119,7 +118,6 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
                     )
                 })
             })
-            .flatten()
             .take(tx_amount))
     }
 
@@ -134,7 +132,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
     pub fn is_canonical_hash(&mut self, hash: H256) -> Result<bool> {
         let num = self.read_header_number(hash)?;
         let canonical_hash = self.read_canonical_hash(num)?;
-        return Ok(canonical_hash != Default::default() && canonical_hash == hash);
+        Ok(canonical_hash != Default::default() && canonical_hash == hash)
     }
 
     /// Returns the decoded account data as stored in the PlainState table.
@@ -173,7 +171,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
     /// Returns the code associated with the given codehash.
     pub fn read_code(&mut self, codehash: H256) -> Result<bytes::Bytes> {
         if codehash == *EMPTY_CODEHASH {
-            return Ok(bytes::Bytes::new())
+            return Ok(bytes::Bytes::new());
         }
         self.0
             .get(tables::Code, codehash)

@@ -1,6 +1,6 @@
 use crate::account::Account;
 use akula::decl_table;
-use ethers::types::{Address, H256, U256};
+use ethers::types::{Address, H256};
 
 const ADDRESS_LENGTH: usize = Address::len_bytes();
 const U64_LENGTH: usize = std::mem::size_of::<u64>();
