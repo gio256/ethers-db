@@ -26,36 +26,71 @@ pub static EMPTY_CODEHASH: Lazy<H256> = Lazy::new(|| ethers::utils::keccak256(ve
 // A wrapper type for an Erigon MdbxTransaction
 pub struct DbTx<'env, K: TransactionKind, E: EnvironmentKind>(MdbxTransaction<'env, K, E>);
 
-fn maybe_gas_price(msg: &MessageWithSignature) -> Option<ethers::types::U256> {
-    match msg.message {
-        Message::Legacy { gas_price, .. } | Message::EIP2930 { gas_price, .. } => {
-            Some(gas_price.to_be_bytes().into())
+/// Converts akula block and message data into ethers data
+pub struct Messenger<'a>(&'a MessageWithSignature);
+impl<'a> Messenger<'a> {
+    pub fn ethers_tx(
+        &self,
+        block_num: akula::models::BlockNumber,
+        block_hash: H256,
+        idx: usize,
+    ) -> ethers::types::Transaction {
+        ethers::types::Transaction {
+            hash: self.0.hash(),
+            nonce: self.0.nonce().into(),
+            block_hash: Some(block_hash),
+            block_number: Some(block_num.0.into()),
+            transaction_index: Some(idx.into()),
+            from: self.0.recover_sender().expect("bad sig"), //TODO: erigon has a separate table they merge instead
+            to: self.0.action().into_address(),
+            value: self.0.value().to_be_bytes().into(),
+            gas_price: self.gas_price(),
+            gas: self.0.gas_limit().into(),
+            input: self.0.input().clone().into(),
+            v: self.0.v().into(),
+            r: self.0.r().to_fixed_bytes().into(),
+            s: self.0.s().to_fixed_bytes().into(),
+            transaction_type: self.tx_type(),
+            access_list: self.access_list(),
+            chain_id: self.0.chain_id().map(|id| id.0.into()),
+
+            //TODO: should these be None for legacy txs?
+            max_priority_fee_per_gas: Some(self.0.max_priority_fee_per_gas().to_be_bytes().into()),
+            max_fee_per_gas: Some(self.0.max_fee_per_gas().to_be_bytes().into()),
         }
-        _ => None,
     }
-}
-fn tx_type(msg: &MessageWithSignature) -> Option<ethers::types::U64> {
-    match msg.message {
-        Message::EIP2930 { .. } => Some(1.into()),
-        Message::EIP1559 { .. } => Some(2.into()),
-        _ => None,
+
+    pub fn gas_price(&self) -> Option<ethers::types::U256> {
+        match self.0.message {
+            Message::Legacy { gas_price, .. } | Message::EIP2930 { gas_price, .. } => {
+                Some(gas_price.to_be_bytes().into())
+            }
+            _ => None,
+        }
     }
-}
-fn access_list(
-    msg: &MessageWithSignature,
-) -> Option<ethers::types::transaction::eip2930::AccessList> {
-    match &msg.message {
-        Message::EIP2930 { access_list, .. } | Message::EIP1559 { access_list, .. } => Some(
-            access_list
-                .iter()
-                .map(|it| ethers::types::transaction::eip2930::AccessListItem {
-                    address: it.address,
-                    storage_keys: it.slots.clone(),
-                })
-                .collect::<Vec<_>>()
-                .into(),
-        ),
-        _ => None,
+
+    fn tx_type(&self) -> Option<ethers::types::U64> {
+        match self.0.message {
+            Message::EIP2930 { .. } => Some(1.into()),
+            Message::EIP1559 { .. } => Some(2.into()),
+            _ => None,
+        }
+    }
+
+    fn access_list(&self) -> Option<ethers::types::transaction::eip2930::AccessList> {
+        match &self.0.message {
+            Message::EIP2930 { access_list, .. } | Message::EIP1559 { access_list, .. } => Some(
+                access_list
+                    .iter()
+                    .map(|it| ethers::types::transaction::eip2930::AccessListItem {
+                        address: it.address,
+                        storage_keys: it.slots.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+            _ => None,
+        }
     }
 }
 
@@ -348,6 +383,30 @@ where
         Ok(dbtx.read_account_data(who)?.nonce.into())
     }
 
+    async fn get_transaction<T: Send + Sync + Into<TxHash>>(
+        &self,
+        transaction_hash: T,
+    ) -> Result<Option<ethers::types::Transaction>, Self::Error> {
+        let hash = transaction_hash.into();
+
+        let mut dbtx = DbTx::new(self.db.begin()?);
+        let block_num = dbtx.read_transaction_block_number(hash)?;
+        let header_key = dbtx.get_header_key(block_num.0)?;
+        let body = dbtx.read_body_for_storage(header_key)?;
+
+        let (msg, idx) = dbtx
+            .read_transactions(body.base_tx_id.0, body.tx_amount)?
+            .zip(0..)
+            .find(|(msg, _i)| msg.hash() == hash)
+            .unwrap();
+
+        Ok(Some(Messenger(&msg).ethers_tx(
+            block_num,
+            header_key.1,
+            idx,
+        )))
+    }
+
     async fn get_storage_at<T: Into<NameOrAddress> + Send + Sync>(
         &self,
         from: T,
@@ -361,6 +420,31 @@ where
         let acct = dbtx.read_account_data(who)?;
         dbtx.read_account_storage(who, acct.incarnation, location)
             .map_err(From::from)
+    }
+
+    async fn get_uncle_count<T: Into<BlockId> + Send + Sync>(
+        &self,
+        block_hash_or_number: T,
+    ) -> Result<U256, Self::Error> {
+        let mut dbtx = DbTx::new(self.db.begin()?);
+        let header_key = dbtx.get_header_key(block_hash_or_number)?;
+        let body = dbtx.read_body_for_storage(header_key)?;
+        Ok(body.uncles.len().into())
+    }
+    async fn get_uncle<T: Into<BlockId> + Send + Sync>(
+        &self,
+        block_hash_or_number: T,
+        idx: U64,
+    ) -> Result<Option<Block<H256>>, Self::Error> {
+        let mut dbtx = DbTx::new(self.db.begin()?);
+        let header_key = dbtx.get_header_key(block_hash_or_number)?;
+        let body = dbtx.read_body_for_storage(header_key)?;
+        let idx = idx.as_usize();
+        if idx < body.uncles.len() {
+            self.get_block(body.uncles[idx].number.0).await
+        } else {
+            Ok(None)
+        }
     }
 
     // https://github.com/akula-bft/akula/blob/a9aed09b31bb41c89832149bcad7248f7fcd70ca/bin/akula.rs#L266
@@ -442,30 +526,8 @@ where
 
         let txs = dbtx
             .read_transactions(body.base_tx_id.0, body.tx_amount)?
-            .scan(0_u64, |idx, msg| {
-                let tx = ethers::types::Transaction {
-                    hash: msg.hash(),
-                    nonce: msg.nonce().into(),
-                    block_hash: Some(block_hash),
-                    block_number: Some(block_num.0.into()),
-                    transaction_index: Some((*idx).into()),
-                    from: msg.recover_sender().expect("bad sig"), //TODO: erigon has a separate table they merge instead
-                    to: msg.action().into_address(),
-                    value: msg.value().to_be_bytes().into(),
-                    gas_price: maybe_gas_price(&msg),
-                    gas: msg.gas_limit().into(),
-                    input: msg.input().clone().into(),
-                    v: msg.v().into(),
-                    r: msg.r().to_fixed_bytes().into(),
-                    s: msg.s().to_fixed_bytes().into(),
-                    transaction_type: tx_type(&msg),
-                    access_list: access_list(&msg),
-                    chain_id: msg.chain_id().map(|id| id.0.into()),
-
-                    //TODO: should these be None for legacy txs?
-                    max_priority_fee_per_gas: Some(msg.max_priority_fee_per_gas().to_be_bytes().into()),
-                    max_fee_per_gas: Some(msg.max_fee_per_gas().to_be_bytes().into()),
-                };
+            .scan(0_usize, |idx, msg| {
+                let tx = Messenger(&msg).ethers_tx(block_num, block_hash, *idx);
                 *idx += 1;
                 Some(tx)
             })
