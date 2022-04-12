@@ -9,6 +9,7 @@ const U64_LENGTH: usize = std::mem::size_of::<u64>();
 decl_table!(LastHeader => Vec<u8> => H256);
 decl_table!(LastBlock => Vec<u8> => H256);
 decl_table!(IncarnationMap => Address => u64);
+decl_table!(BlockTransactionLookup => H256 => akula::models::U256);
 decl_table!(PlainState => Address => Account);
 
 // Custom table for storage because it overlaps with PlainState

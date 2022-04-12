@@ -7,7 +7,7 @@ use akula::{
     },
     models::{BlockHeader, BodyForStorage, Message},
 };
-use anyhow::{format_err, Result};
+use anyhow::{bail, format_err, Result};
 use async_trait::async_trait;
 use ethers::{
     core::types::{Address, Block, BlockId, NameOrAddress, TxHash, H256, U256, U64},
@@ -86,23 +86,40 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
             .get(tables::BlockBody.erased(), key.encode().to_vec())?
             .ok_or_else(|| format_err!("cant find body"))?;
 
-        let body = <akula::models::BodyForStorage as Decodable>::decode(&mut &*raw_body)
+        let mut body = <akula::models::BodyForStorage as Decodable>::decode(&mut &*raw_body)
             .map_err(|e| format_err!("BodyForStorage decode error: {}", e))?;
 
+        // https://github.com/ledgerwatch/erigon/blob/f56d4c5881822e70f65927ade76ef05bfacb1df4/core/rawdb/accessors_chain.go#L602-L605
+        if body.tx_amount < 2 {
+            bail!("block body has too few txs: {}", body.tx_amount)
+        }
+        body.base_tx_id.0 += 1;
+        body.tx_amount -= 2;
+
         Ok(body)
+    }
+
+    pub fn read_transaction_block_number(
+        &mut self,
+        hash: H256,
+    ) -> Result<akula::models::BlockNumber> {
+        let num = self
+            .0
+            .get(crate::tables::BlockTransactionLookup, hash)?
+            .ok_or_else(|| format_err!("cant find tx"))?;
+
+        if num > akula::models::U256::from(u64::MAX) {
+            bail!("Invalid block number from TxLookup: {:?}", num)
+        }
+
+        Ok(num.as_u64().into())
     }
 
     pub fn read_transactions(
         &mut self,
         body: &BodyForStorage,
-    ) -> Result<impl Iterator<Item = Message>> {
-        let tx_amount = usize::try_from(body.tx_amount)
-            .map_err(|e| format_err!("Bad BodyForStorage tx_amount: {}", e))?;
-
-        // https://github.com/ledgerwatch/erigon/blob/f56d4c5881822e70f65927ade76ef05bfacb1df4/core/rawdb/accessors_chain.go#L602-L604
-        if tx_amount < 2 {
-            panic!("block body has unexpected tx_amount: {:?}", body.tx_amount)
-        }
+    ) -> Result<impl Iterator<Item = akula::models::MessageWithSignature>> {
+        let tx_amount = usize::try_from(body.tx_amount)?;
 
         // Note: BlockTransaction is EthTx in erigon
         // https://github.com/ledgerwatch/erigon-lib/blob/da0666bd83faf7879a2a0c2a814a94965f78883b/kv/tables.go#L227
@@ -112,10 +129,9 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
             .walk(Some(body.base_tx_id.encode().to_vec()))
             .flat_map(|res| {
                 res.and_then(|(_, tx)| {
-                    Ok(
-                        <akula::models::MessageWithSignature as Decodable>::decode(&mut &*tx)?
-                            .message,
-                    )
+                    Ok(<akula::models::MessageWithSignature as Decodable>::decode(
+                        &mut &*tx,
+                    )?)
                 })
             })
             .take(tx_amount))
@@ -186,9 +202,9 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
 
     pub fn get_header_key<T: Into<BlockId> + Send + Sync>(&mut self, id: T) -> Result<HeaderKey> {
         let (num, hash) = match id.into() {
-            BlockId::Hash(_h) => {
-                let num = self.read_header_number(_h)?.0.into();
-                (num, _h)
+            BlockId::Hash(hash) => {
+                let num = self.read_header_number(hash)?.0.into();
+                (num, hash)
             }
             BlockId::Number(id) => match id {
                 ethers::core::types::BlockNumber::Number(n) => {
