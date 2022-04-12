@@ -226,7 +226,6 @@ where
         let who = self.get_address(from).await?;
 
         let tx = self.db.begin()?;
-        let tx = self.db.begin()?;
         let acct = tx.get(crate::tables::PlainState, who)?.unwrap_or_default();
 
         let bucket = crate::tables::StorageBucket::new(who, acct.incarnation);
