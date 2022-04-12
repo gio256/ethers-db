@@ -18,7 +18,7 @@ $ERIGON_PATH/build/bin/rpcdaemon --datadir=$PWD/data --private.api.addr=localhos
 cargo run --bin txgen
 ```
 
-# Test block reproduction
+# Run tests (for what it's worth currently)
 ```bash
-cargo test test_get_block_full -- --nocapture
+cargo test -- --test-threads=1 --nocapture
 ```
