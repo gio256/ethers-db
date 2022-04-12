@@ -1,6 +1,6 @@
 use crate::k256::ecdsa::SigningKey;
-use ethers::{prelude::*, solc::Solc, utils::format_ether};
 use anyhow::format_err;
+use ethers::{prelude::*, solc::Solc, utils::format_ether};
 
 #[tokio::main]
 async fn main() {

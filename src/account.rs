@@ -61,7 +61,7 @@ impl akula::kv::traits::TableDecode for Account {
         Ok(acct)
     }
 }
-//TODO
+//TODO: dummy impl
 impl akula::kv::traits::TableEncode for Account {
     type Encoded = Vec<u8>;
     fn encode(self) -> Self::Encoded {
