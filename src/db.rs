@@ -207,14 +207,23 @@ where
 
         let tx = self.db.begin()?;
 
-        let raw = tx
+        let raw_header = tx
+            .get(
+                akula::kv::tables::Header.erased(),
+                TableEncode::encode((num.as_u64(), hash)).to_vec(),
+            )
+            .unwrap()
+            .unwrap();
+        let header = <BlockHeader as Decodable>::decode(&mut &*raw_header).unwrap();
+
+        let raw_body = tx
             .get(
                 tables::BlockBody.erased(),
                 TableEncode::encode((num.as_u64(), hash)).to_vec(),
             )?
             .ok_or_else(|| DbError::BadError)?;
 
-        let body = <akula::models::BodyForStorage as Decodable>::decode(&mut &*raw)
+        let body = <akula::models::BodyForStorage as Decodable>::decode(&mut &*raw_body)
             .map_err(|e| eyre!("BodyForStorage decode error: {}", e))?;
 
         let tx_amount = usize::try_from(body.tx_amount)
@@ -230,7 +239,7 @@ where
         let txs = tx
             .cursor(tables::BlockTransaction.erased())?
             .walk(Some(body.base_tx_id.encode().to_vec()))
-            .map(|res| res.map(|(_, tx)| tx))
+            .map(|res| res.map(|(_, tx)| <akula::models::MessageWithSignature as Decodable>::decode(&mut &*tx).expect("cant decode tx").message.hash() ))
             .take(tx_amount)
             .collect::<anyhow::Result<Vec<_>>>()?;
 
@@ -238,10 +247,40 @@ where
             return Err(eyre!("Unexpected number of transactions in block {}.", num).into())
         }
 
-        dbg!(txs);
+        let ommer_hashes = body.uncles.iter().map(|header| {
+            let (_, hash) = self.get_header_key(header.number.0).expect("no match for ommer");
+            hash
+        }).collect();
 
-        panic!("");
-        Err(Self::Error::BadError)
+
+        let block = Block {
+            hash: Some(hash),
+            parent_hash: header.parent_hash,
+            uncles_hash: header.ommers_hash,
+            author: header.beneficiary,
+            state_root: header.state_root,
+            transactions_root: header.transactions_root,
+            receipts_root: header.receipts_root,
+            number: Some(num),
+            gas_used: header.gas_used.into(),
+            gas_limit: header.gas_limit.into(),
+            extra_data: header.extra_data.into(),
+            logs_bloom: Some(header.logs_bloom),
+            timestamp: header.timestamp.into(),
+            difficulty: header.difficulty.to_be_bytes().into(),
+            total_difficulty: None, // TODO
+            uncles: ommer_hashes,
+            transactions: txs,
+            mix_hash: Some(header.mix_hash),
+            nonce: Some(header.nonce.to_fixed_bytes().into()),
+            base_fee_per_gas: header.base_fee_per_gas.map(|f| f.to_be_bytes().into()),
+
+            // TODO:
+            // seal_fields
+            //size
+            ..Default::default()
+        };
+        Ok(Some(block))
     }
 }
 
