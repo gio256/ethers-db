@@ -10,34 +10,6 @@ decl_table!(LastHeader => Vec<u8> => H256);
 decl_table!(PlainState => Address => Account);
 decl_table!(Header => akula::kv::tables::HeaderKey => Vec<u8>);
 
-decl_table!(BlockBody => akula::kv::tables::HeaderKey => Vec<u8>);
-
-// Custom table for BlockBody because Akula uses slightly different struct
-// TODO: ommers likely won't decode properly
-use akula::models::BlockHeader;
-use fastrlp::*;
-
-// decl_table!(BlockBody => akula::kv::tables::HeaderKey => BodyForStorage);
-
-#[derive(Clone, Debug, PartialEq, RlpDecodable)]
-pub struct BodyForStorage {
-    pub base_tx_id: u64,
-    pub tx_amount: u32,
-    pub ommers: Vec<BlockHeader>,
-}
-impl akula::kv::TableEncode for BodyForStorage {
-    type Encoded = Vec<u8>;
-
-    fn encode(self) -> Self::Encoded {
-        self.encode()
-    }
-}
-impl akula::kv::TableDecode for BodyForStorage {
-    fn decode(mut b: &[u8]) -> anyhow::Result<Self> {
-        Ok(<Self as fastrlp::Decodable>::decode(&mut b).expect("Couldn't decode"))
-    }
-}
-
 // Custom table for storage because it overlaps with PlainState
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StorageBucket {

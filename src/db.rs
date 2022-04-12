@@ -15,6 +15,12 @@ use thiserror::Error;
 
 use crate::account::Account;
 
+//TODO:
+// historical state
+// get_block
+// get_block_with_txs
+// propogate db better
+
 #[derive(Debug)]
 pub struct Db<M, E: EnvironmentKind> {
     inner: M,
@@ -57,16 +63,17 @@ where
         }
     }
 
-    async fn get_header<T: Into<BlockId> + Send + Sync>(
+    pub fn get_header_key<T: Into<BlockId> + Send + Sync>(
         &self,
         id: T,
-    ) -> Result<Option<BlockHeader>, <Self as Middleware>::Error> {
+    ) -> Result<(U64, H256), <Self as Middleware>::Error> {
         let tx = self.db.begin()?;
 
-        let last = tx.get(akula::kv::tables::LastHeader, ()).unwrap();
-        dbg!(last);
         let (num, hash) = match id.into() {
-            BlockId::Hash(_h) => panic!(""),
+            BlockId::Hash(_h) => {
+                let num = tx.get(tables::HeaderNumber, _h)?.ok_or(DbError::BadError)?;
+                (num.0.into(), _h)
+            }
             BlockId::Number(id) => match id {
                 BlockNumber::Number(n) => (
                     n,
@@ -74,18 +81,41 @@ where
                         .unwrap()
                         .unwrap(),
                 ),
+                BlockNumber::Latest => {
+                    let hash = tx
+                        .get(
+                            crate::tables::LastHeader,
+                            String::from("LastHeader").into_bytes(),
+                        )?
+                        .ok_or(DbError::BadError)?;
+                    let num = tx
+                        .get(tables::HeaderNumber, hash)?
+                        .ok_or(DbError::BadError)?;
+                    (num.0.into(), hash)
+                }
                 _ => panic!("unsupported block id type"),
             },
         };
-        dbg!(hash);
-        dbg!(num);
-        let key = TableEncode::encode((num.as_u64(), hash)).to_vec();
+        Ok((num, hash))
+    }
+
+    pub fn get_header<T: Into<BlockId> + Send + Sync>(
+        &self,
+        id: T,
+    ) -> Result<Option<BlockHeader>, <Self as Middleware>::Error> {
+        let tx = self.db.begin()?;
+        let (num, hash) = self.get_header_key(id)?;
+
         let raw_header = tx
-            .get(akula::kv::tables::Header.erased(), key.clone())
+            .get(
+                akula::kv::tables::Header.erased(),
+                TableEncode::encode((num.as_u64(), hash)).to_vec(),
+            )
             .unwrap()
             .unwrap();
         let header = <BlockHeader as Decodable>::decode(&mut &*raw_header).unwrap();
-        Ok(Some(header))
+        dbg!(header);
+        Ok(None)
     }
 }
 
@@ -124,8 +154,9 @@ where
     ) -> Result<U256, Self::Error> {
         assert!(block.is_none(), "no history handling yet");
         let who = self.get_address(from).await?;
-        Ok(self
-            .get_account(who)?
+        let tx = self.db.begin()?;
+        Ok(tx
+            .get(crate::tables::PlainState, who)?
             .map_or_else(|| Default::default(), |acct| acct.balance))
     }
 
@@ -136,8 +167,9 @@ where
     ) -> Result<U256, Self::Error> {
         assert!(block.is_none(), "no history handling yet");
         let who = self.get_address(from).await?;
-        Ok(self
-            .get_account(who)?
+        let tx = self.db.begin()?;
+        Ok(tx
+            .get(crate::tables::PlainState, who)?
             .map_or_else(|| Default::default(), |acct| acct.nonce.into()))
     }
 
@@ -148,12 +180,12 @@ where
         block: Option<BlockId>,
     ) -> Result<H256, Self::Error> {
         assert!(block.is_none(), "no history handling yet");
-        let tx = self.db.begin()?;
         let who = self.get_address(from).await?;
-        let acct = self
-            .get_account(who)
-            .map_err::<anyhow::Error, _>(From::from)?
-            .unwrap_or_default();
+
+        let tx = self.db.begin()?;
+        let tx = self.db.begin()?;
+        let acct = tx.get(crate::tables::PlainState, who)?.unwrap_or_default();
+
         let bucket = crate::tables::StorageBucket::new(who, acct.incarnation);
         let mut cur = tx.cursor(crate::tables::Storage).unwrap();
 
@@ -166,45 +198,47 @@ where
         Ok(Default::default())
     }
 
+    // https://github.com/akula-bft/akula/blob/a9aed09b31bb41c89832149bcad7248f7fcd70ca/bin/akula.rs#L266
     async fn get_block<T: Into<BlockId> + Send + Sync>(
         &self,
         block_hash_or_number: T,
     ) -> Result<Option<Block<TxHash>>, Self::Error> {
+        let (num, hash) = self.get_header_key(block_hash_or_number)?;
+
         let tx = self.db.begin()?;
 
-        let block = akula::models::BlockNumber(2);
+        let raw = tx
+            .get(
+                tables::BlockBody.erased(),
+                TableEncode::encode((num.as_u64(), hash)).to_vec(),
+            )?
+            .ok_or_else(|| DbError::BadError)?;
 
-        let cur = tx.cursor(akula::kv::tables::BlockBody.erased()).unwrap();
-        let mut walker = cur.walk(Some(TableEncode::encode(block).to_vec()));
+        let body = <akula::models::BodyForStorage as Decodable>::decode(&mut &*raw)
+            .map_err(|e| eyre!("BodyForStorage decode error: {}", e))?;
 
-        use akula::kv::traits::TableDecode;
-        let (k, v) = walker.next().transpose().unwrap().unwrap();
-        let (num, hash) = <(akula::models::BlockNumber, akula::models::H256)>::decode(&k).unwrap();
-        dbg!(num);
-        dbg!(hash);
+        let tx_amount = usize::try_from(body.tx_amount)
+            .map_err(|e| eyre!("Bad BodyForStorage tx_amount: {}", e))?;
 
-        let body = <akula::models::BodyForStorage as Decodable>::decode(&mut &*v).unwrap();
-        let body = dbg!(body);
+        // https://github.com/ledgerwatch/erigon/blob/f56d4c5881822e70f65927ade76ef05bfacb1df4/core/rawdb/accessors_chain.go#L602-L604
+        if tx_amount < 2 {
+            panic!("block body has unexpected tx_amount: {:?}", body.tx_amount)
+        }
 
-        let base_tx_id = body.base_tx_id;
-        let tx_amt = usize::try_from(body.tx_amount).unwrap();
+        // Note: BlockTransaction is EthTx in erigon
+        // https://github.com/ledgerwatch/erigon-lib/blob/da0666bd83faf7879a2a0c2a814a94965f78883b/kv/tables.go#L227
         let txs = tx
-            .cursor(akula::kv::tables::BlockTransaction.erased())
-            .unwrap()
-            .walk(Some(base_tx_id.encode().to_vec()))
+            .cursor(tables::BlockTransaction.erased())?
+            .walk(Some(body.base_tx_id.encode().to_vec()))
             .map(|res| res.map(|(_, tx)| tx))
-            .take(tx_amt)
-            .collect::<Vec<_>>();
+            .take(tx_amount)
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        if txs.len() != tx_amount {
+            return Err(eyre!("Unexpected number of transactions in block {}.", num).into())
+        }
 
         dbg!(txs);
-
-        // let raw_body = tx.get(tables::BlockBody.erased(), key).unwrap().unwrap();
-        // dbg!(hex::encode(raw_body.clone()));
-        // dbg!(hex::encode(body.clone()));
-        // dbg!(body);
-
-        // let body = <BlockBody as Decodable>::decode(&mut &*raw_body).unwrap();
-        // dbg!(body);
 
         panic!("");
         Err(Self::Error::BadError)

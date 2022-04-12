@@ -79,7 +79,6 @@ fn bytes_to_u64(buf: &[u8]) -> u64 {
     u64::from_le_bytes(decoded)
 }
 
-
 pub fn parse_u64_with_len(enc: &mut &[u8]) -> u64 {
     let len = enc.get_u8().into();
     let val = bytes_to_u64(&enc[..len]);

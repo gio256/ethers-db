@@ -59,6 +59,18 @@ mod tests {
         assert_eq!(num, 2.into());
     }
 
+    #[tokio::test]
+    async fn test_get_block_header() {
+        let db = get_db();
+        let res = db.get_header(1).expect("failed to get block number");
+    }
+
+    #[tokio::test]
+    async fn test_get_block_full() {
+        let db = get_db();
+        let res = db.get_block(2).await.expect("failed to get block number");
+    }
+
     fn get_db() -> Db<impl Middleware, NoWriteMap> {
         let base_dir = std::env::current_dir().unwrap();
         let data_dir = base_dir.join(DATA_DIR);
