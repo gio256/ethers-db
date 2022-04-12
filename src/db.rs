@@ -5,12 +5,14 @@ use akula::{
         tables::HeaderKey,
         traits::TableEncode,
     },
-    models::{Message, BodyForStorage, BlockBody, BlockHeader},
+    models::{BlockBody, BlockHeader, BodyForStorage, Message},
 };
 use anyhow::{bail, format_err};
 use async_trait::async_trait;
 use ethers::{
-    core::types::{Transaction, Address, Block, BlockId, BlockNumber, NameOrAddress, TxHash, H256, U256, U64},
+    core::types::{
+        Address, Block, BlockId, BlockNumber, NameOrAddress, Transaction, TxHash, H256, U256, U64,
+    },
     providers::{maybe, FromErr, Middleware, PendingTransaction, ProviderError},
 };
 use eyre::{eyre, Result};
@@ -35,6 +37,7 @@ pub fn open_db<E: EnvironmentKind>(chaindata_dir: PathBuf) -> anyhow::Result<Mdb
     MdbxEnvironment::<E>::open_ro(
         mdbx::Environment::new(),
         &chaindata_dir,
+        // read-only, so only the size of the chart matters
         akula::kv::tables::CHAINDATA_TABLES.clone(),
     )
 }
@@ -52,9 +55,34 @@ impl<M, E: EnvironmentKind> Db<M, E> {
         Self { inner, db }
     }
 
-    pub fn get_account(&self, who: Address) -> anyhow::Result<Option<Account>> {
-        let tx = self.db.begin()?;
+    pub fn read_account(
+        &self,
+        tx: &mut MdbxTransaction<'_, mdbx::RO, E>,
+        who: Address,
+    ) -> anyhow::Result<Account> {
         tx.get(crate::tables::PlainState, who)
+            .map(|res| res.unwrap_or_default())
+    }
+
+    /// Retrieves the hash of the current canonical head header.
+    pub fn read_head_header_hash(
+        &self,
+        tx: &mut MdbxTransaction<'_, mdbx::RO, E>,
+    ) -> anyhow::Result<H256> {
+        tx.get(
+            crate::tables::LastHeader,
+            String::from("LastHeader").into_bytes(),
+        )
+        .map(|res| res.unwrap_or_default())
+    }
+
+    pub fn read_header_number(
+        &self,
+        tx: &mut MdbxTransaction<'_, mdbx::RO, E>,
+        hash: H256,
+    ) -> anyhow::Result<akula::models::BlockNumber> {
+        tx.get(tables::HeaderNumber, hash)
+            .map(|res| res.unwrap_or_default())
     }
 
     pub fn read_header(
@@ -75,10 +103,7 @@ impl<M, E: EnvironmentKind> Db<M, E> {
         key: HeaderKey,
     ) -> anyhow::Result<BodyForStorage> {
         let raw_body = tx
-            .get(
-                tables::BlockBody.erased(),
-                key.encode().to_vec(),
-            )?
+            .get(tables::BlockBody.erased(), key.encode().to_vec())?
             .ok_or_else(|| format_err!("cant find body"))?;
 
         let body = <akula::models::BodyForStorage as Decodable>::decode(&mut &*raw_body)
@@ -107,13 +132,15 @@ impl<M, E: EnvironmentKind> Db<M, E> {
             .walk(Some(body.base_tx_id.encode().to_vec()))
             .map(|res| {
                 res.and_then(|(_, tx)| {
-                    Ok(<akula::models::MessageWithSignature as Decodable>::decode(&mut &*tx)?.message)
+                    Ok(
+                        <akula::models::MessageWithSignature as Decodable>::decode(&mut &*tx)?
+                            .message,
+                    )
                 })
             })
             .flatten()
             .take(tx_amount))
     }
-
 }
 
 impl<M, E> Db<M, E>
@@ -135,7 +162,7 @@ where
         &self,
         id: T,
     ) -> Result<HeaderKey, <Self as Middleware>::Error> {
-        let tx = self.db.begin()?;
+        let mut tx = self.db.begin()?;
 
         let (num, hash) = match id.into() {
             BlockId::Hash(_h) => {
@@ -150,15 +177,8 @@ where
                         .unwrap(),
                 ),
                 BlockNumber::Latest => {
-                    let hash = tx
-                        .get(
-                            crate::tables::LastHeader,
-                            String::from("LastHeader").into_bytes(),
-                        )?
-                        .ok_or(DbError::BadError)?;
-                    let num = tx
-                        .get(tables::HeaderNumber, hash)?
-                        .ok_or(DbError::BadError)?;
+                    let hash = self.read_head_header_hash(&mut tx)?;
+                    let num = self.read_header_number(&mut tx, hash)?;
                     (num.0.into(), hash)
                 }
                 _ => panic!("unsupported block id type"),
@@ -235,7 +255,7 @@ where
         let acct = tx.get(crate::tables::PlainState, who)?.unwrap_or_default();
 
         let bucket = crate::tables::StorageBucket::new(who, acct.incarnation);
-        let mut cur = tx.cursor(crate::tables::Storage).unwrap();
+        let mut cur = tx.cursor(crate::tables::Storage)?;
 
         if let Some((k, v)) = cur.seek_both_range(bucket, location)? {
             if k == location {
@@ -259,7 +279,10 @@ where
         let header = self.read_header(&mut tx, header_key)?;
         let body = self.read_body(&mut tx, header_key)?;
 
-        let txs = self.read_transactions(&mut tx, &body)?.map(|msg| msg.hash()).collect::<Vec<_>>();
+        let txs = self
+            .read_transactions(&mut tx, &body)?
+            .map(|msg| msg.hash())
+            .collect::<Vec<_>>();
 
         if txs.len() as u64 != body.tx_amount {
             return Err(eyre!("Unexpected number of transactions in block {}.", block_num).into());

@@ -12,21 +12,24 @@ mod tables;
 #[cfg(test)]
 mod tests {
     use super::db::*;
-    use std::sync::Arc;
     use akula::kv::mdbx::MdbxEnvironment;
     use ethers::{
         core::types::{Address, H256, U64},
         providers::{Middleware, MockProvider, Provider},
     };
-    use once_cell::sync::Lazy;
     use mdbx::NoWriteMap;
+    use once_cell::sync::Lazy;
+    use std::sync::Arc;
 
     const CHAINDATA_DIR: &str = "data/chaindata";
 
     pub static MDBX: Lazy<Arc<MdbxEnvironment<mdbx::NoWriteMap>>> = Lazy::new(|| {
         let base_path = std::env::current_dir().expect("could not get pwd");
         let chaindata_path = base_path.join(CHAINDATA_DIR);
-        Arc::new(open_db(chaindata_path.clone()).expect(&format!("could not open erigon db at {:?}", chaindata_path)))
+        Arc::new(
+            open_db(chaindata_path.clone())
+                .expect(&format!("could not open erigon db at {:?}", chaindata_path)),
+        )
     });
 
     fn get_db() -> Db<impl Middleware, NoWriteMap> {
@@ -53,17 +56,6 @@ mod tests {
         let db = get_db();
         let bal = db.get_balance(dst, None).await.unwrap();
         dbg!(bal);
-    }
-
-    #[test]
-    pub fn test_get_account() {
-        let dst: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2"
-            .parse()
-            .unwrap();
-
-        let db = get_db();
-        let acct = db.get_account(dst).unwrap();
-        dbg!(acct);
     }
 
     #[tokio::test]
@@ -93,5 +85,4 @@ mod tests {
         let block = db.get_block(2).await.expect("failed to get block number");
         dbg!(block);
     }
-
 }
