@@ -41,4 +41,4 @@ ethnum = { git = "https://github.com/vorot93/ethnum-rs", branch = "staging" }
 
 # Patch for entry_insert destabilization: https://github.com/rust-lang/rust/pull/94105
 [patch."https://github.com/akula-bft/akula"]
-akula = { path = "../ext/akula" }
+akula = { git = "https://github.com/gi0van/akula", branch = "develop"}
