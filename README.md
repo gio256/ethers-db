@@ -13,3 +13,8 @@
 ```bash
 cargo run --bin txgen
 ```
+
+# Test block reproduction
+```bash
+cargo test test_get_block_full -- --nocapture
+```

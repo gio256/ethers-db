@@ -5,10 +5,9 @@ use ethers::types::{Address, H256, U256};
 const ADDRESS_LENGTH: usize = Address::len_bytes();
 const U64_LENGTH: usize = std::mem::size_of::<u64>();
 
-decl_table!(LastBlock => Vec<u8> => H256);
+// Akula's LastHeader has no "LastHeader" key
 decl_table!(LastHeader => Vec<u8> => H256);
 decl_table!(PlainState => Address => Account);
-decl_table!(Header => akula::kv::tables::HeaderKey => Vec<u8>);
 
 // Custom table for storage because it overlaps with PlainState
 #[derive(Clone, Copy, Debug, PartialEq)]

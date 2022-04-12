@@ -60,12 +60,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_block_header() {
-        let db = get_db();
-        let res = db.get_header(1).expect("failed to get block number");
-    }
-
-    #[tokio::test]
     async fn test_get_block_full() {
         let db = get_db();
         let block = db.get_block(2).await.expect("failed to get block number");

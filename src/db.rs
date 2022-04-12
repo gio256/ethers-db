@@ -1,10 +1,16 @@
 use akula::{
-    kv::{mdbx::MdbxEnvironment, tables, traits::TableEncode},
-    models::{BlockBody, BlockHeader},
+    kv::{
+        mdbx::{MdbxEnvironment, MdbxTransaction},
+        tables,
+        tables::HeaderKey,
+        traits::TableEncode,
+    },
+    models::{Message, BodyForStorage, BlockBody, BlockHeader},
 };
+use anyhow::{bail, format_err};
 use async_trait::async_trait;
 use ethers::{
-    core::types::{Address, Block, BlockId, BlockNumber, NameOrAddress, TxHash, H256, U256, U64},
+    core::types::{Transaction, Address, Block, BlockId, BlockNumber, NameOrAddress, TxHash, H256, U256, U64},
     providers::{maybe, FromErr, Middleware, PendingTransaction, ProviderError},
 };
 use eyre::{eyre, Result};
@@ -17,8 +23,6 @@ use crate::account::Account;
 
 //TODO:
 // historical state
-// get_block
-// get_block_with_txs
 // propogate db better
 
 #[derive(Debug)]
@@ -46,6 +50,64 @@ impl<M, E: EnvironmentKind> Db<M, E> {
         let tx = self.db.begin()?;
         tx.get(crate::tables::PlainState, who)
     }
+
+    pub fn read_header(
+        &self,
+        tx: &mut MdbxTransaction<'_, mdbx::RO, E>,
+        key: HeaderKey,
+    ) -> anyhow::Result<BlockHeader> {
+        let raw_header = tx
+            .get(akula::kv::tables::Header.erased(), key.encode().to_vec())?
+            .ok_or_else(|| format_err!("cant find header"))?;
+        <BlockHeader as Decodable>::decode(&mut &*raw_header)
+            .map_err(|e| format_err!("cant decode header: {}", e))
+    }
+
+    pub fn read_body(
+        &self,
+        tx: &mut MdbxTransaction<'_, mdbx::RO, E>,
+        key: HeaderKey,
+    ) -> anyhow::Result<BodyForStorage> {
+        let raw_body = tx
+            .get(
+                tables::BlockBody.erased(),
+                key.encode().to_vec(),
+            )?
+            .ok_or_else(|| format_err!("cant find body"))?;
+
+        let body = <akula::models::BodyForStorage as Decodable>::decode(&mut &*raw_body)
+            .map_err(|e| format_err!("BodyForStorage decode error: {}", e))?;
+
+        Ok(body)
+    }
+
+    pub fn read_transactions(
+        &self,
+        dbtx: &mut MdbxTransaction<'_, mdbx::RO, E>,
+        body: &BodyForStorage,
+    ) -> anyhow::Result<impl Iterator<Item = Message>> {
+        let tx_amount = usize::try_from(body.tx_amount)
+            .map_err(|e| format_err!("Bad BodyForStorage tx_amount: {}", e))?;
+
+        // https://github.com/ledgerwatch/erigon/blob/f56d4c5881822e70f65927ade76ef05bfacb1df4/core/rawdb/accessors_chain.go#L602-L604
+        if tx_amount < 2 {
+            panic!("block body has unexpected tx_amount: {:?}", body.tx_amount)
+        }
+
+        // Note: BlockTransaction is EthTx in erigon
+        // https://github.com/ledgerwatch/erigon-lib/blob/da0666bd83faf7879a2a0c2a814a94965f78883b/kv/tables.go#L227
+        Ok(dbtx
+            .cursor(tables::BlockTransaction.erased())?
+            .walk(Some(body.base_tx_id.encode().to_vec()))
+            .map(|res| {
+                res.and_then(|(_, tx)| {
+                    Ok(<akula::models::MessageWithSignature as Decodable>::decode(&mut &*tx)?.message)
+                })
+            })
+            .flatten()
+            .take(tx_amount))
+    }
+
 }
 
 impl<M, E> Db<M, E>
@@ -66,7 +128,7 @@ where
     pub fn get_header_key<T: Into<BlockId> + Send + Sync>(
         &self,
         id: T,
-    ) -> Result<(U64, H256), <Self as Middleware>::Error> {
+    ) -> Result<HeaderKey, <Self as Middleware>::Error> {
         let tx = self.db.begin()?;
 
         let (num, hash) = match id.into() {
@@ -96,26 +158,7 @@ where
                 _ => panic!("unsupported block id type"),
             },
         };
-        Ok((num, hash))
-    }
-
-    pub fn get_header<T: Into<BlockId> + Send + Sync>(
-        &self,
-        id: T,
-    ) -> Result<Option<BlockHeader>, <Self as Middleware>::Error> {
-        let tx = self.db.begin()?;
-        let (num, hash) = self.get_header_key(id)?;
-
-        let raw_header = tx
-            .get(
-                akula::kv::tables::Header.erased(),
-                TableEncode::encode((num.as_u64(), hash)).to_vec(),
-            )
-            .unwrap()
-            .unwrap();
-        let header = <BlockHeader as Decodable>::decode(&mut &*raw_header).unwrap();
-        dbg!(header);
-        Ok(None)
+        Ok((num.as_u64().into(), hash))
     }
 }
 
@@ -203,65 +246,40 @@ where
         &self,
         block_hash_or_number: T,
     ) -> Result<Option<Block<TxHash>>, Self::Error> {
-        let (num, hash) = self.get_header_key(block_hash_or_number)?;
+        let header_key = self.get_header_key(block_hash_or_number)?;
+        let (block_num, block_hash) = header_key;
 
-        let tx = self.db.begin()?;
+        let mut tx = self.db.begin()?;
 
-        let raw_header = tx
-            .get(
-                akula::kv::tables::Header.erased(),
-                TableEncode::encode((num.as_u64(), hash)).to_vec(),
-            )
-            .unwrap()
-            .unwrap();
-        let header = <BlockHeader as Decodable>::decode(&mut &*raw_header).unwrap();
+        let header = self.read_header(&mut tx, header_key)?;
+        let body = self.read_body(&mut tx, header_key)?;
 
-        let raw_body = tx
-            .get(
-                tables::BlockBody.erased(),
-                TableEncode::encode((num.as_u64(), hash)).to_vec(),
-            )?
-            .ok_or_else(|| DbError::BadError)?;
+        let txs = self.read_transactions(&mut tx, &body)?.map(|msg| msg.hash()).collect::<Vec<_>>();
 
-        let body = <akula::models::BodyForStorage as Decodable>::decode(&mut &*raw_body)
-            .map_err(|e| eyre!("BodyForStorage decode error: {}", e))?;
-
-        let tx_amount = usize::try_from(body.tx_amount)
-            .map_err(|e| eyre!("Bad BodyForStorage tx_amount: {}", e))?;
-
-        // https://github.com/ledgerwatch/erigon/blob/f56d4c5881822e70f65927ade76ef05bfacb1df4/core/rawdb/accessors_chain.go#L602-L604
-        if tx_amount < 2 {
-            panic!("block body has unexpected tx_amount: {:?}", body.tx_amount)
+        if txs.len() as u64 != body.tx_amount {
+            return Err(eyre!("Unexpected number of transactions in block {}.", block_num).into());
         }
 
-        // Note: BlockTransaction is EthTx in erigon
-        // https://github.com/ledgerwatch/erigon-lib/blob/da0666bd83faf7879a2a0c2a814a94965f78883b/kv/tables.go#L227
-        let txs = tx
-            .cursor(tables::BlockTransaction.erased())?
-            .walk(Some(body.base_tx_id.encode().to_vec()))
-            .map(|res| res.map(|(_, tx)| <akula::models::MessageWithSignature as Decodable>::decode(&mut &*tx).expect("cant decode tx").message.hash() ))
-            .take(tx_amount)
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-        if txs.len() != tx_amount {
-            return Err(eyre!("Unexpected number of transactions in block {}.", num).into())
-        }
-
-        let ommer_hashes = body.uncles.iter().map(|header| {
-            let (_, hash) = self.get_header_key(header.number.0).expect("no match for ommer");
-            hash
-        }).collect();
-
+        let ommer_hashes = body
+            .uncles
+            .iter()
+            .map(|header| {
+                let (_, hash) = self
+                    .get_header_key(header.number.0)
+                    .expect("no match for ommer");
+                hash
+            })
+            .collect();
 
         let block = Block {
-            hash: Some(hash),
+            hash: Some(block_hash),
             parent_hash: header.parent_hash,
             uncles_hash: header.ommers_hash,
             author: header.beneficiary,
             state_root: header.state_root,
             transactions_root: header.transactions_root,
             receipts_root: header.receipts_root,
-            number: Some(num),
+            number: Some(block_num.0.into()),
             gas_used: header.gas_used.into(),
             gas_limit: header.gas_limit.into(),
             extra_data: header.extra_data.into(),
