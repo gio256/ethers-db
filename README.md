@@ -20,5 +20,5 @@ cargo run --bin txgen
 
 # Run tests (for what it's worth currently)
 ```bash
-cargo test -- --test-threads=1 --nocapture
+cargo test -- --nocapture
 ```

@@ -5,19 +5,47 @@ pub mod db;
 mod account;
 mod tables;
 
+//@gio-scratch bug notes
+//- db.begin() is throwing "Resource temporarily unavailable", even
+// with no actual tx.get's.
+
 #[cfg(test)]
 mod tests {
     use super::db::*;
+    use std::sync::Arc;
+    use akula::kv::mdbx::MdbxEnvironment;
     use ethers::{
         core::types::{Address, H256, U64},
         providers::{Middleware, MockProvider, Provider},
     };
+    use once_cell::sync::Lazy;
     use mdbx::NoWriteMap;
 
-    const DATA_DIR: &str = "data";
+    const CHAINDATA_DIR: &str = "data/chaindata";
+
+    pub static MDBX: Lazy<Arc<MdbxEnvironment<mdbx::NoWriteMap>>> = Lazy::new(|| {
+        let base_path = std::env::current_dir().expect("could not get pwd");
+        let chaindata_path = base_path.join(CHAINDATA_DIR);
+        Arc::new(open_db(chaindata_path.clone()).expect(&format!("could not open erigon db at {:?}", chaindata_path)))
+    });
+
+    fn get_db() -> Db<impl Middleware, NoWriteMap> {
+        let provider = Provider::new(MockProvider::new());
+        Db::new(provider, MDBX.clone())
+    }
 
     #[tokio::test]
     async fn test_get_balance() {
+        let dst: Address = "0xa94f5374Fce5edBC8E2a8697C15331677e6EbF0B"
+            .parse()
+            .unwrap();
+
+        let db = get_db();
+        let bal = db.get_balance(dst, None).await.unwrap();
+        dbg!(bal);
+    }
+    #[tokio::test]
+    async fn test_get_balance2() {
         let dst: Address = "0xa94f5374Fce5edBC8E2a8697C15331677e6EbF0B"
             .parse()
             .unwrap();
@@ -66,11 +94,4 @@ mod tests {
         dbg!(block);
     }
 
-    fn get_db() -> Db<impl Middleware, NoWriteMap> {
-        let base_dir = std::env::current_dir().unwrap();
-        let data_dir = base_dir.join(DATA_DIR);
-
-        let provider = Provider::new(MockProvider::new());
-        Db::new(provider, data_dir).expect("bad db path")
-    }
 }

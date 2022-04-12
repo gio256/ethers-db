@@ -31,19 +31,25 @@ pub struct Db<M, E: EnvironmentKind> {
     db: Arc<MdbxEnvironment<E>>,
 }
 
+pub fn open_db<E: EnvironmentKind>(chaindata_dir: PathBuf) -> anyhow::Result<MdbxEnvironment<E>> {
+    MdbxEnvironment::<E>::open_ro(
+        mdbx::Environment::new(),
+        &chaindata_dir,
+        akula::kv::tables::CHAINDATA_TABLES.clone(),
+    )
+}
+
 impl<M, E: EnvironmentKind> Db<M, E> {
-    pub fn new(inner: M, data_dir: PathBuf) -> Result<Self> {
-        let chaindata_dir = data_dir.join("chaindata");
-        let db = MdbxEnvironment::<E>::open_ro(
-            mdbx::Environment::new(),
-            &chaindata_dir,
-            akula::kv::tables::CHAINDATA_TABLES.clone(),
-        )
-        .map_err(|e| eyre!("Chaindata error: {}", e))?;
+    pub fn open_new(inner: M, chaindata_dir: PathBuf) -> anyhow::Result<Self> {
+        let db = open_db(chaindata_dir)?;
         Ok(Self {
             inner,
             db: Arc::new(db),
         })
+    }
+
+    pub fn new(inner: M, db: Arc<MdbxEnvironment<E>>) -> Self {
+        Self { inner, db }
     }
 
     pub fn get_account(&self, who: Address) -> anyhow::Result<Option<Account>> {
