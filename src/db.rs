@@ -4,7 +4,7 @@ use akula::{
     kv::{mdbx::MdbxTransaction, tables, tables::HeaderKey, traits::TableEncode},
     models::{BlockHeader, BodyForStorage, MessageWithSignature},
 };
-use anyhow::{bail, format_err, Result};
+use anyhow::{format_err, Result};
 use ethers::core::types::{Address, BlockId, H256};
 use fastrlp::Decodable;
 use mdbx::{EnvironmentKind, TransactionKind};
@@ -14,11 +14,11 @@ use crate::account::Account;
 
 pub static EMPTY_CODEHASH: Lazy<H256> = Lazy::new(|| ethers::utils::keccak256(vec![]).into());
 
-// A wrapper type for an Erigon MdbxTransaction
-pub struct DbTx<'env, K: TransactionKind, E: EnvironmentKind>(MdbxTransaction<'env, K, E>);
+/// A Reader wraps an MdbxTransaction and provides Erigon-specific access methods.
+pub struct Reader<'env, K: TransactionKind, E: EnvironmentKind>(MdbxTransaction<'env, K, E>);
 
-// Most of these methods come from https://github.com/ledgerwatch/erigon/blob/f56d4c5881822e70f65927ade76ef05bfacb1df4/core/rawdb/accessors_chain.go
-impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
+// Most of these methods are ported from erigon/core/rawdb/accesssors_*.go
+impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     pub fn new(tx: MdbxTransaction<'env, K, E>) -> Self {
         Self(tx)
     }
@@ -80,17 +80,16 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
         let mut body = <akula::models::BodyForStorage as Decodable>::decode(&mut &*raw_body)
             .map_err(|e| format_err!("BodyForStorage decode error: {}", e))?;
 
+        // Skip 1 system tx at the beginning of the block and 1 at the end
         // https://github.com/ledgerwatch/erigon/blob/f56d4c5881822e70f65927ade76ef05bfacb1df4/core/rawdb/accessors_chain.go#L602-L605
-        // Skip 1 system tx in the beginning of the block and 1 at the end
-        if body.tx_amount < 2 {
-            bail!(
-                "block body has too few txs: {}. HeaderKey: {:?}",
-                body.tx_amount,
-                key
-            )
-        }
         body.base_tx_id.0 += 1;
-        body.tx_amount -= 2;
+        body.tx_amount = body.tx_amount.checked_sub(2).ok_or_else(|| {
+            format_err!(
+                "Block body has too few txs: {}. HeaderKey: {:?}",
+                body.tx_amount,
+                key,
+            )
+        })?;
 
         Ok(body)
     }
@@ -105,11 +104,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> DbTx<'env, K, E> {
             .get(crate::tables::BlockTransactionLookup, hash)?
             .ok_or_else(|| format_err!("cant find tx"))?;
 
-        if num > akula::models::U256::from(u64::MAX) {
-            bail!("Invalid block number from TxLookup: {:?}", num)
-        }
-
-        Ok(num.as_u64().into())
+        Ok(u64::try_from(num)?.into())
     }
 
     /// Returns an iterator over the `n` transactions beginning at `start_key`.

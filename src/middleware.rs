@@ -34,6 +34,11 @@ impl<M, E: EnvironmentKind> DbMiddleware<M, E> {
             db: Arc::new(db),
         })
     }
+
+    /// Begins a read-only MdbxTransaction and returns an Erigon db Reader
+    pub fn reader(&self) -> Result<Reader<'_, mdbx::RO, E>> {
+        Ok(Reader::new(self.db.begin()?))
+    }
 }
 
 impl<M, E> DbMiddleware<M, E>
@@ -67,7 +72,7 @@ where
     }
 
     async fn get_block_number(&self) -> Result<U64, Self::Error> {
-        let mut dbtx = DbTx::new(self.db.begin()?);
+        let mut dbtx = self.reader()?;
         Ok(dbtx.read_head_block_number()?.0.into())
     }
 
@@ -78,7 +83,7 @@ where
     ) -> Result<U256, Self::Error> {
         assert!(block.is_none(), "no history handling yet");
         let who = self.get_address(from).await?;
-        let mut dbtx = DbTx::new(self.db.begin()?);
+        let mut dbtx = self.reader()?;
         Ok(dbtx.read_account_data(who)?.balance)
     }
 
@@ -89,7 +94,7 @@ where
     ) -> Result<U256, Self::Error> {
         assert!(block.is_none(), "no history handling yet");
         let who = self.get_address(from).await?;
-        let mut dbtx = DbTx::new(self.db.begin()?);
+        let mut dbtx = self.reader()?;
         Ok(dbtx.read_account_data(who)?.nonce.into())
     }
 
@@ -99,7 +104,7 @@ where
     ) -> Result<Option<ethers::types::Transaction>, Self::Error> {
         let hash = transaction_hash.into();
 
-        let mut dbtx = DbTx::new(self.db.begin()?);
+        let mut dbtx = self.reader()?;
         let block_num = dbtx.read_transaction_block_number(hash)?;
         let header_key = dbtx.get_header_key(block_num.0)?;
         let body = dbtx.read_body_for_storage(header_key)?;
@@ -110,11 +115,7 @@ where
             .find(|(msg, _i)| msg.hash() == hash)
             .unwrap();
 
-        Ok(Some(MsgCast(&msg).ethers_tx(
-            block_num,
-            header_key.1,
-            idx,
-        )))
+        Ok(Some(MsgCast(&msg).cast(block_num, header_key.1, idx)))
     }
 
     async fn get_storage_at<T: Into<NameOrAddress> + Send + Sync>(
@@ -126,7 +127,7 @@ where
         assert!(block.is_none(), "no history handling yet");
         let who = self.get_address(from).await?;
 
-        let mut dbtx = DbTx::new(self.db.begin()?);
+        let mut dbtx = self.reader()?;
         let acct = dbtx.read_account_data(who)?;
         dbtx.read_account_storage(who, acct.incarnation, location)
             .map_err(From::from)
@@ -136,7 +137,7 @@ where
         &self,
         block_hash_or_number: T,
     ) -> Result<U256, Self::Error> {
-        let mut dbtx = DbTx::new(self.db.begin()?);
+        let mut dbtx = self.reader()?;
         let header_key = dbtx.get_header_key(block_hash_or_number)?;
         let body = dbtx.read_body_for_storage(header_key)?;
         Ok(body.uncles.len().into())
@@ -147,7 +148,7 @@ where
         block_hash_or_number: T,
         idx: U64,
     ) -> Result<Option<Block<H256>>, Self::Error> {
-        let mut dbtx = DbTx::new(self.db.begin()?);
+        let mut dbtx = self.reader()?;
         let header_key = dbtx.get_header_key(block_hash_or_number)?;
         let body = dbtx.read_body_for_storage(header_key)?;
         let idx = idx.as_usize();
@@ -163,7 +164,7 @@ where
         &self,
         block_hash_or_number: T,
     ) -> Result<Option<Block<TxHash>>, Self::Error> {
-        let mut dbtx = DbTx::new(self.db.begin()?);
+        let mut dbtx = self.reader()?;
 
         let header_key = dbtx.get_header_key(block_hash_or_number)?;
         let (block_num, block_hash) = header_key;
@@ -201,7 +202,7 @@ where
         &self,
         block_hash_or_number: T,
     ) -> Result<Option<Block<ethers::types::Transaction>>, Self::Error> {
-        let mut dbtx = DbTx::new(self.db.begin()?);
+        let mut dbtx = self.reader()?;
 
         let header_key = dbtx.get_header_key(block_hash_or_number)?;
         let (block_num, block_hash) = header_key;
@@ -212,7 +213,7 @@ where
         let txs = dbtx
             .read_transactions(body.base_tx_id.0, body.tx_amount)?
             .scan(0_usize, |idx, msg| {
-                let tx = MsgCast(&msg).ethers_tx(block_num, block_hash, *idx);
+                let tx = MsgCast(&msg).cast(block_num, block_hash, *idx);
                 *idx += 1;
                 Some(tx)
             })

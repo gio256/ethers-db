@@ -90,7 +90,7 @@ mod tests {
         let dst: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2"
             .parse()
             .unwrap();
-        let mut dbtx = DbTx::new(MDBX.begin().unwrap());
+        let mut dbtx = Reader::new(MDBX.begin().unwrap());
         let acct = dbtx.read_account_data(dst).unwrap();
         let code = dbtx.read_code(acct.codehash).unwrap();
         dbg!(code);

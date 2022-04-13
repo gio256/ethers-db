@@ -28,7 +28,7 @@ pub fn bytes_to_u64(buf: &[u8]) -> u64 {
 /// Converts akula block and message data into ethers transaction data
 pub struct MsgCast<'a>(pub &'a MessageWithSignature);
 impl<'a> MsgCast<'a> {
-    pub fn ethers_tx(
+    pub fn cast(
         &self,
         block_num: akula::models::BlockNumber,
         block_hash: H256,
@@ -132,4 +132,3 @@ impl<'a> BlockCast<'a> {
         }
     }
 }
-
