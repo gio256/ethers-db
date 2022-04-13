@@ -61,7 +61,7 @@ impl akula::kv::traits::TableDecode for Account {
         Ok(acct)
     }
 }
-//TODO: dummy impl
+//TODO: dummy impl as we only need to decode for now, but need the trait bound
 impl akula::kv::traits::TableEncode for Account {
     type Encoded = Vec<u8>;
     fn encode(self) -> Self::Encoded {
@@ -69,19 +69,9 @@ impl akula::kv::traits::TableEncode for Account {
     }
 }
 
-// https://github.com/akula-bft/akula/blob/a9aed09b31bb41c89832149bcad7248f7fcd70ca/src/models/account.rs#L47
-fn bytes_to_u64(buf: &[u8]) -> u64 {
-    let mut decoded = [0u8; 8];
-    for (i, b) in buf.iter().rev().enumerate() {
-        decoded[i] = *b;
-    }
-
-    u64::from_le_bytes(decoded)
-}
-
 pub fn parse_u64_with_len(enc: &mut &[u8]) -> u64 {
     let len = enc.get_u8().into();
-    let val = bytes_to_u64(&enc[..len]);
+    let val = crate::utils::bytes_to_u64(&enc[..len]);
     enc.advance(len);
     val
 }

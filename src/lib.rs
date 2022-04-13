@@ -1,11 +1,16 @@
-pub mod db;
+pub mod middleware;
 
 mod account;
+mod db;
+mod storage;
 mod tables;
+mod utils;
 
 #[cfg(test)]
 mod tests {
     use super::db::*;
+    use super::middleware::*;
+    use crate::utils::*;
     use akula::kv::mdbx::MdbxEnvironment;
     use ethers::{
         core::types::{Address, H256},
@@ -26,9 +31,9 @@ mod tests {
         )
     });
 
-    fn get_db() -> Db<impl Middleware, NoWriteMap> {
+    fn get_db() -> DbMiddleware<impl Middleware, NoWriteMap> {
         let provider = Provider::new(MockProvider::new());
-        Db::new(provider, MDBX.clone())
+        DbMiddleware::new(provider, MDBX.clone())
     }
 
     #[tokio::test]

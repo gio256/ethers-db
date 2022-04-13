@@ -2,6 +2,7 @@ use crate::k256::ecdsa::SigningKey;
 use anyhow::format_err;
 use ethers::{prelude::*, solc::Solc, utils::format_ether};
 
+// Temporary script used for seeding test data
 #[tokio::main]
 async fn main() {
     let dst: Address = "0xa94f5374Fce5edBC8E2a8697C15331677e6EbF0B"
@@ -53,22 +54,4 @@ async fn main() {
         .unwrap();
     //first deployed contract: 0x0d4c6c6605a729a379216c93e919711a081beba2
     println!("Store address: {:?}", receipt.contract_address.unwrap());
-
-    //TODO: fac.deploy sends unreasonble max fee per gas
-    // let fac = ContractFactory::new(
-    //     contract.abi.unwrap().clone(),
-    //     contract.bin.unwrap().clone().into_bytes().unwrap(),
-    //     client,
-    // );
-    // let store = fac
-    //     .deploy(())
-    //     .unwrap()
-    //     .legacy()
-    //     .confirmations(0usize)
-    //     .send()
-    //     .await
-    //     .unwrap();
-
-    // let store = Contract::new(store.address(), *contract.abi.unwrap(), client);
-    // store.method::<(), ()>("inc", ()).unwrap().send().await.unwrap().await.unwrap();
 }
