@@ -10,7 +10,7 @@ use std::{path::PathBuf, sync::Arc};
 use thiserror::Error;
 
 use crate::db::*;
-use crate::utils::{open_db, Messenger};
+use crate::utils::{open_db, MsgCast};
 
 #[derive(Debug)]
 pub struct DbMiddleware<M, E: EnvironmentKind> {
@@ -110,7 +110,7 @@ where
             .find(|(msg, _i)| msg.hash() == hash)
             .unwrap();
 
-        Ok(Some(Messenger(&msg).ethers_tx(
+        Ok(Some(MsgCast(&msg).ethers_tx(
             block_num,
             header_key.1,
             idx,
@@ -193,33 +193,7 @@ where
             })
             .collect();
 
-        let block = Block {
-            hash: Some(block_hash),
-            parent_hash: header.parent_hash,
-            uncles_hash: header.ommers_hash,
-            author: header.beneficiary,
-            state_root: header.state_root,
-            transactions_root: header.transactions_root,
-            receipts_root: header.receipts_root,
-            number: Some(block_num.0.into()),
-            gas_used: header.gas_used.into(),
-            gas_limit: header.gas_limit.into(),
-            extra_data: header.extra_data.into(),
-            logs_bloom: Some(header.logs_bloom),
-            timestamp: header.timestamp.into(),
-            difficulty: header.difficulty.to_be_bytes().into(),
-            total_difficulty: None, // TODO
-            uncles: ommer_hashes,
-            transactions: txs,
-            mix_hash: Some(header.mix_hash),
-            nonce: Some(header.nonce.to_fixed_bytes().into()),
-            base_fee_per_gas: header.base_fee_per_gas.map(|f| f.to_be_bytes().into()),
-
-            // TODO:
-            // seal_fields
-            //size
-            ..Default::default()
-        };
+        let block = crate::utils::BlockCast(&header).cast(txs, block_num, block_hash, ommer_hashes);
         Ok(Some(block))
     }
 
@@ -238,7 +212,7 @@ where
         let txs = dbtx
             .read_transactions(body.base_tx_id.0, body.tx_amount)?
             .scan(0_usize, |idx, msg| {
-                let tx = Messenger(&msg).ethers_tx(block_num, block_hash, *idx);
+                let tx = MsgCast(&msg).ethers_tx(block_num, block_hash, *idx);
                 *idx += 1;
                 Some(tx)
             })
@@ -261,29 +235,7 @@ where
             })
             .collect();
 
-        let block = Block {
-            hash: Some(block_hash),
-            parent_hash: header.parent_hash,
-            uncles_hash: header.ommers_hash,
-            author: header.beneficiary,
-            state_root: header.state_root,
-            transactions_root: header.transactions_root,
-            receipts_root: header.receipts_root,
-            number: Some(block_num.0.into()),
-            gas_used: header.gas_used.into(),
-            gas_limit: header.gas_limit.into(),
-            extra_data: header.extra_data.into(),
-            logs_bloom: Some(header.logs_bloom),
-            timestamp: header.timestamp.into(),
-            difficulty: header.difficulty.to_be_bytes().into(),
-            total_difficulty: None, // TODO
-            uncles: ommer_hashes,
-            transactions: txs,
-            mix_hash: Some(header.mix_hash),
-            nonce: Some(header.nonce.to_fixed_bytes().into()),
-            base_fee_per_gas: header.base_fee_per_gas.map(|f| f.to_be_bytes().into()),
-            ..Default::default()
-        };
+        let block = crate::utils::BlockCast(&header).cast(txs, block_num, block_hash, ommer_hashes);
         Ok(Some(block))
     }
 }

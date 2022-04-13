@@ -1,6 +1,6 @@
 use akula::{
     kv::mdbx::MdbxEnvironment,
-    models::{Message, MessageWithSignature},
+    models::{BlockHeader, Message, MessageWithSignature},
 };
 use anyhow::Result;
 use ethers::types::H256;
@@ -22,13 +22,12 @@ pub fn bytes_to_u64(buf: &[u8]) -> u64 {
     for (i, b) in buf.iter().rev().enumerate() {
         decoded[i] = *b;
     }
-
     u64::from_le_bytes(decoded)
 }
 
-/// Converts akula block and message data into ethers data
-pub struct Messenger<'a>(pub &'a MessageWithSignature);
-impl<'a> Messenger<'a> {
+/// Converts akula block and message data into ethers transaction data
+pub struct MsgCast<'a>(pub &'a MessageWithSignature);
+impl<'a> MsgCast<'a> {
     pub fn ethers_tx(
         &self,
         block_num: akula::models::BlockNumber,
@@ -93,3 +92,44 @@ impl<'a> Messenger<'a> {
         }
     }
 }
+
+/// Converts akula block data into ethers block data
+pub struct BlockCast<'a>(pub &'a BlockHeader);
+impl<'a> BlockCast<'a> {
+    pub fn cast<TX: std::default::Default>(
+        &self,
+        txs: Vec<TX>,
+        block_num: akula::models::BlockNumber,
+        block_hash: H256,
+        ommer_hashes: Vec<H256>,
+    ) -> ethers::types::Block<TX> {
+        ethers::types::Block {
+            hash: Some(block_hash),
+            parent_hash: self.0.parent_hash,
+            uncles_hash: self.0.ommers_hash,
+            author: self.0.beneficiary,
+            state_root: self.0.state_root,
+            transactions_root: self.0.transactions_root,
+            receipts_root: self.0.receipts_root,
+            number: Some(block_num.0.into()),
+            gas_used: self.0.gas_used.into(),
+            gas_limit: self.0.gas_limit.into(),
+            extra_data: self.0.extra_data.clone().into(),
+            logs_bloom: Some(self.0.logs_bloom),
+            timestamp: self.0.timestamp.into(),
+            difficulty: self.0.difficulty.to_be_bytes().into(),
+            total_difficulty: None, // TODO
+            uncles: ommer_hashes,
+            transactions: txs,
+            mix_hash: Some(self.0.mix_hash),
+            nonce: Some(self.0.nonce.to_fixed_bytes().into()),
+            base_fee_per_gas: self.0.base_fee_per_gas.map(|f| f.to_be_bytes().into()),
+
+            // TODO:
+            // seal_fields
+            //size
+            ..Default::default()
+        }
+    }
+}
+
