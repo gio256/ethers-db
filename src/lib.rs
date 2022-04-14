@@ -14,7 +14,7 @@ mod tests {
     use super::{account::Account, db::*, ffi::ffi, middleware::*, utils::*};
     use akula::kv::mdbx::MdbxEnvironment;
     use ethers::{
-        core::types::{Address, H256},
+        core::types::{Address, },
         providers::{Middleware, MockProvider, Provider},
         utils::keccak256,
     };
@@ -25,6 +25,7 @@ mod tests {
     pub static MDBX: Lazy<Arc<MdbxEnvironment<mdbx::NoWriteMap>>> = Lazy::new(|| {
         let chaindata_path = env!("ERIGON_CHAINDATA_DIR");
         let chaindata_path = PathBuf::from(chaindata_path);
+        ffi::db_init();
         Arc::new(
             open_db(chaindata_path.clone())
                 .expect(&format!("could not open erigon db at {:?}", chaindata_path)),
@@ -37,38 +38,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_balance() {
-        let dst: Address = "0xa94f5374Fce5edBC8E2a8697C15331677e6EbF0B"
+    async fn test_account_accessor() {
+        let who: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2"
             .parse()
             .unwrap();
+        let acct = Account {
+            nonce: 1,
+            incarnation: 2,
+            balance: ethers::types::U256::MAX,
+            codehash: keccak256(vec![0xff]).into(),
+        };
+
+        ffi::put_account(who, acct).expect("db seed failed");
 
         let db = get_db();
-        let bal = db.get_balance(dst, None).await.unwrap();
-        dbg!(bal);
-    }
-    #[tokio::test]
-    async fn test_get_balance2() {
-        let dst: Address = "0xa94f5374Fce5edBC8E2a8697C15331677e6EbF0B"
-            .parse()
-            .unwrap();
+        let mut dbtx = db.reader().unwrap();
+        let read = dbtx.read_account_data(who).unwrap();
+        assert_eq!(acct, read);
 
-        let db = get_db();
-        let bal = db.get_balance(dst, None).await.unwrap();
-        dbg!(bal);
+        let bal = db.get_balance(who, None).await.unwrap();
+        assert_eq!(bal, acct.balance);
     }
 
     #[tokio::test]
     pub async fn test_get_storage_at() {
-        let dst: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2"
+        let who: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2"
             .parse()
             .unwrap();
+        let key = keccak256(vec![0xff]).into();
+        let val = keccak256(vec![0xff, 0xab, 0xcd]).into();
+
+        ffi::put_storage(who, key, val).expect("db seed failed");
 
         let db = get_db();
-        let val = db.get_storage_at(dst, H256::zero(), None).await.unwrap();
-        dbg!(val);
+        let read = db.get_storage_at(who, key, None).await.unwrap();
+        assert_eq!(read, val);
     }
 
-    #[tokio::test]
+    // #[tokio::test]
+    #[allow(unused)]
     async fn test_get_block_number() {
         let db = get_db();
         let num = db
@@ -78,14 +86,16 @@ mod tests {
         dbg!(num);
     }
 
-    #[tokio::test]
+    // #[tokio::test]
+    #[allow(unused)]
     async fn test_get_block_full() {
         let db = get_db();
         let block = db.get_block(2).await.expect("failed to get block number");
         dbg!(block);
     }
 
-    #[tokio::test]
+    // #[tokio::test]
+    #[allow(unused)]
     async fn test_read_code() {
         let dst: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2"
             .parse()
@@ -96,7 +106,8 @@ mod tests {
         dbg!(code);
     }
 
-    #[tokio::test]
+    // #[tokio::test]
+    #[allow(unused)]
     async fn test_transactions() {
         let db = get_db();
         let txs = db.get_block(0).await.unwrap().unwrap().transactions;
@@ -109,25 +120,5 @@ mod tests {
         dbg!(txs);
         let txs = db.get_block(4).await.unwrap().unwrap().transactions;
         dbg!(txs);
-    }
-
-    #[test]
-    fn test_ffi() {
-        let who: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2"
-            .parse()
-            .unwrap();
-        let acct = Account {
-            nonce: 1,
-            incarnation: 2, // TODO: can't pass this in
-            balance: ethers::types::U256::from(100),
-            codehash: keccak256(vec![0xff]).into(),
-        };
-
-        ffi::put_account(who, acct).expect("db seed failed");
-
-        let dbtx = get_db();
-        let mut dbtx = dbtx.reader().unwrap();
-        let read = dbtx.read_account_data(who).unwrap();
-        assert_eq!(acct, read);
     }
 }

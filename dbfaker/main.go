@@ -11,10 +11,11 @@ import (
 
     "github.com/ledgerwatch/erigon/core/types/accounts"
     "github.com/ledgerwatch/erigon/common"
-    // "github.com/ledgerwatch/erigon/core/rawdb"
+    "github.com/ledgerwatch/erigon/core/rawdb"
     "github.com/ledgerwatch/erigon/core/state"
     "github.com/ledgerwatch/erigon-lib/kv/mdbx"
     "github.com/ledgerwatch/erigon-lib/kv"
+    "github.com/holiman/uint256"
 	ledgerLog "github.com/ledgerwatch/log/v3"
 )
 
@@ -49,6 +50,36 @@ func PutAccount(address []byte, rlpAccount []byte, incarnation uint64) {
     }
 }
 
+//export PutStorage
+func PutStorage(addressB []byte, keyB []byte, valB []byte) {
+    db := dbOpen()
+    defer dbClose(db)
+
+    address := common.BytesToAddress(addressB)
+    key := common.BytesToHash(keyB)
+    val, overflow := uint256.FromBig(common.BytesToHash(valB).Big())
+    if overflow {
+        log.Fatal("Overflowed int conversion")
+    }
+
+    ctx := context.Background()
+    tx, err := db.BeginRw(ctx)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer tx.Rollback()
+
+    var acct accounts.Account
+    rawdb.ReadAccount(tx, address, &acct)
+
+    w := state.NewPlainStateWriterNoHistory(tx)
+    w.WriteAccountStorage(address, acct.Incarnation, &key, new(uint256.Int), val)
+
+    if err = tx.Commit(); err != nil {
+        log.Fatal(err)
+    }
+}
+
 func dbOpen() kv.RwDB {
     logger := ledgerLog.New()
     cwd, err := os.Getwd()
@@ -66,4 +97,10 @@ func dbOpen() kv.RwDB {
 func dbClose(db kv.RwDB) {
     db.Close()
     fmt.Print("Go mdbx closed\n")
+}
+
+//export DbInit
+func DbInit() {
+    db := dbOpen()
+    db.Close()
 }

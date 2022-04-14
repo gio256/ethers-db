@@ -84,6 +84,7 @@ fn main() {
         out_dir.to_str().unwrap()
     );
 
-    // also re-run build script any time the go bindings change
+    // also re-run build script any time the go bindings or db change
     println!("cargo:rerun-if-changed={}", go_dir.to_str().unwrap());
+    println!("cargo:rerun-if-changed={}", rm_dir.to_str().unwrap());
 }
