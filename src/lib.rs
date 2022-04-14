@@ -7,24 +7,24 @@ mod tables;
 mod utils;
 
 #[cfg(test)]
+mod ffi;
+
+#[cfg(test)]
 mod tests {
-    use super::db::*;
-    use super::middleware::*;
-    use crate::utils::*;
+    use super::{account::Account, db::*, ffi::ffi, middleware::*, utils::*};
     use akula::kv::mdbx::MdbxEnvironment;
     use ethers::{
         core::types::{Address, H256},
         providers::{Middleware, MockProvider, Provider},
+        utils::keccak256,
     };
     use mdbx::NoWriteMap;
     use once_cell::sync::Lazy;
-    use std::sync::Arc;
-
-    const CHAINDATA_DIR: &str = "data/chaindata";
+    use std::{path::PathBuf, sync::Arc};
 
     pub static MDBX: Lazy<Arc<MdbxEnvironment<mdbx::NoWriteMap>>> = Lazy::new(|| {
-        let base_path = std::env::current_dir().expect("could not get pwd");
-        let chaindata_path = base_path.join(CHAINDATA_DIR);
+        let chaindata_path = env!("ERIGON_CHAINDATA_DIR");
+        let chaindata_path = PathBuf::from(chaindata_path);
         Arc::new(
             open_db(chaindata_path.clone())
                 .expect(&format!("could not open erigon db at {:?}", chaindata_path)),
@@ -109,9 +109,25 @@ mod tests {
         dbg!(txs);
         let txs = db.get_block(4).await.unwrap().unwrap().transactions;
         dbg!(txs);
+    }
 
-        // let mut dbtx = DbTx::new(MDBX.begin().unwrap());
-        // let res = dbtx.read_transaction_block_number(txs[1]).unwrap();
-        // dbg!(res);
+    #[test]
+    fn test_ffi() {
+        let who: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2"
+            .parse()
+            .unwrap();
+        let acct = Account {
+            nonce: 1,
+            incarnation: 2, // TODO: can't pass this in
+            balance: ethers::types::U256::from(100),
+            codehash: keccak256(vec![0xff]).into(),
+        };
+
+        ffi::put_account(who, acct).expect("db seed failed");
+
+        let dbtx = get_db();
+        let mut dbtx = dbtx.reader().unwrap();
+        let read = dbtx.read_account_data(who).unwrap();
+        assert_eq!(acct, read);
     }
 }

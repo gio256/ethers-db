@@ -1,3 +1,8 @@
 /target
 /Cargo.lock
 /data
+/build
+
+# ignore go build output
+*.h
+*.a

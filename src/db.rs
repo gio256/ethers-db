@@ -149,6 +149,12 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
             .map(|res| res.unwrap_or_default())
     }
 
+    pub fn read_account_data_raw(&mut self, who: Address) -> Result<Vec<u8>> {
+        self.0
+            .get(crate::tables::PlainState.erased(), who.encode().to_vec())
+            .map(|res| res.unwrap_or_default())
+    }
+
     /// Returns the value of the storage for account `who` indexed by `key`.
     pub fn read_account_storage(
         &mut self,
@@ -210,5 +216,20 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
             },
         };
         Ok((num.as_u64().into(), hash))
+    }
+
+    /// Helper fn to walk a db table and print
+    pub fn walk_table_debug<T: akula::kv::Table>(
+        &mut self,
+        table: akula::kv::tables::ErasedTable<T>,
+    ) -> Result<()> {
+        println!("\nWalking table: {:?}", table.0);
+        let mut cur = self.0.cursor(table).unwrap();
+        while let Some((k, v)) = cur.next().unwrap() {
+            let k = hex::encode(k);
+            let v = hex::encode(v);
+            println!("key: {:?}\nval: {:?}\n", k, v);
+        }
+        Ok(())
     }
 }

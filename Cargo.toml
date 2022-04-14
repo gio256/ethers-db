@@ -34,6 +34,7 @@ anyhow = "1"
 once_cell = "1"
 
 [dev-dependencies]
+libc = "0.2"
 
 # Akula patches
 [patch.crates-io]

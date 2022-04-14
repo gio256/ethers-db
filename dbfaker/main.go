@@ -2,54 +2,68 @@ package main
 
 import "C"
 import (
-    // "os"
+    "os"
     "fmt"
-    // "path"
-    // "log"
-    // "context"
+    "path"
+    "log"
+    "context"
     // "math/big"
 
-    // "github.com/ledgerwatch/erigon/core/types"
+    "github.com/ledgerwatch/erigon/core/types/accounts"
+    "github.com/ledgerwatch/erigon/common"
     // "github.com/ledgerwatch/erigon/core/rawdb"
-    // "github.com/ledgerwatch/erigon-lib/kv/mdbx"
-	// ledgerLog "github.com/ledgerwatch/log/v3"
+    "github.com/ledgerwatch/erigon/core/state"
+    "github.com/ledgerwatch/erigon-lib/kv/mdbx"
+    "github.com/ledgerwatch/erigon-lib/kv"
+	ledgerLog "github.com/ledgerwatch/log/v3"
 )
-
-//export CallMe
-func CallMe() {
-    fmt.Println("Gogogadget ffi")
-}
 
 func main() {}
 
-// output an rlp-encoded list of blocks (maybe even blocks that we've executed?), then check that the
-// results are as expected. Can we build blocks in this script, then use importChain to
-// execute them?
-// func main() {
-//     fmt.Println("Hello, world")
-//     logger := ledgerLog.New()
-//     cwd, err := os.Getwd()
-//     if err != nil {
-//         log.Fatal(err)
-//     }
-//     db, err := mdbx.NewMDBX(logger).Path(path.Join(cwd, "chaindata")).Open()
-//     if err != nil {
-//         log.Fatal(err)
-//     }
-//     defer db.Close()
+// This dir should be cleaned between each run
+const DB_DIR = "build/chaindata"
 
-//     ctx := context.Background()
-//     tx, err := db.BeginRw(ctx)
-//     if err != nil {
-//         log.Fatal(err)
-//     }
-//     defer tx.Rollback()
+//export PutAccount
+func PutAccount(address []byte, rlpAccount []byte, incarnation uint64) {
+    db := dbOpen()
+    defer dbClose(db)
 
-// 	header := &types.Header{Number: big.NewInt(42), Extra: []byte("test header")}
-//     rawdb.WriteHeader(tx, header)
+    var acct accounts.Account
+    if err := acct.DecodeForHashing(rlpAccount); err != nil {
+        log.Fatal(err)
+    }
+    acct.Incarnation = incarnation
 
-//     entry := rawdb.ReadHeader(tx, header.Hash(), header.Number.Uint64())
-//     fmt.Printf("%v\n", entry)
+    ctx := context.Background()
+    tx, err := db.BeginRw(ctx)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer tx.Rollback()
 
-//     rawdb.DeleteHeader(tx, header.Hash(), header.Number.Uint64())
-// }
+    w := state.NewPlainStateWriterNoHistory(tx)
+    w.UpdateAccountData(common.BytesToAddress(address), new(accounts.Account), &acct)
+
+    if err = tx.Commit(); err != nil {
+        log.Fatal(err)
+    }
+}
+
+func dbOpen() kv.RwDB {
+    logger := ledgerLog.New()
+    cwd, err := os.Getwd()
+    if err != nil {
+        log.Fatal(err)
+    }
+    db, err := mdbx.NewMDBX(logger).Path(path.Join(cwd, DB_DIR)).Open()
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    return db
+}
+
+func dbClose(db kv.RwDB) {
+    db.Close()
+    fmt.Print("Go mdbx closed\n")
+}
