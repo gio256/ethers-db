@@ -46,7 +46,7 @@ func MdbxClose(dbPtr C.uintptr_t) {
 	db := handle.Value().(kv.RwDB)
 	db.Close()
 	handle.Delete()
-	log.Println("Go mdbx closed")
+	// log.Println("Go mdbx closed")
 }
 
 //export PutAccount
@@ -131,6 +131,27 @@ func PutHeadHeaderHash(dbPtr C.uintptr_t, hash []byte) (exit int) {
 	defer closer(&err)
 
 	err = rawdb.WriteHeadHeaderHash(tx, h)
+	if err != nil {
+		log.Println(err)
+		return -1
+	}
+
+	return 1
+}
+
+//export PutHeaderNumber
+func PutHeaderNumber(dbPtr C.uintptr_t, hash []byte, num uint64) (exit int) {
+	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
+	h := common.BytesToHash(hash)
+
+	tx, closer, err := begin(db)
+	if err != nil {
+		log.Println(err)
+		return -1
+	}
+	defer closer(&err)
+
+	err = rawdb.WriteHeaderNumber(tx, h, num)
 	if err != nil {
 		log.Println(err)
 		return -1

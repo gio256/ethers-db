@@ -44,6 +44,12 @@ impl Writer {
         Ok(())
     }
 
+    pub fn put_header_number(&mut self, mut hash: H256, num: u64) -> Result<()> {
+        let exit = unsafe { PutHeaderNumber(self.db_ptr, (&mut hash).into(), num) };
+        exit.ok_or_fmt("PutAccount")?;
+        Ok(())
+    }
+
     pub fn put_account(&mut self, mut who: Address, acct: Account) -> Result<()> {
         let rlp_acct: RlpAccount = acct.into();
         let mut buf = vec![];

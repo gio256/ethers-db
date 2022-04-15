@@ -10,6 +10,7 @@ extern "C" {
     pub(crate) fn MdbxOpen(path: GoPath) -> GoTuple<GoExit, GoPtr>;
     pub(crate) fn MdbxClose(db: GoPtr);
     pub(crate) fn PutHeadHeaderHash(db: GoPtr, hash: GoU256) -> GoExit;
+    pub(crate) fn PutHeaderNumber(db: GoPtr, hash: GoU256, num: u64) -> GoExit;
     pub(crate) fn PutStorage(db: GoPtr, address: GoAddress, key: GoU256, val: GoU256) -> GoExit;
     pub(crate) fn PutAccount(
         ptr: GoPtr,

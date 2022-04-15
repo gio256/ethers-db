@@ -233,3 +233,64 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{account::Account, ffi::writer::Writer, tests::{TMP_DIR, get_db} };
+    use anyhow::{Result};
+    use ethers::{
+        core::types::Address,
+        utils::keccak256,
+    };
+
+    #[test]
+    fn test_read_block_number() -> Result<()> {
+        let hash = keccak256(vec![0xab]).into();
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        w.put_head_header_hash(hash)?;
+        let path = w.close()?;
+
+        let db = get_db(path)?;
+        let read = db.reader()?.read_head_header_hash()?;
+        assert_eq!(read, hash);
+        Ok(())
+    }
+
+    #[test]
+    fn test_read_header_number() -> Result<()> {
+        let hash = keccak256(vec![0x10]).into();
+        let num = 100;
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        w.put_header_number(hash, num)?;
+        let path = w.close()?;
+
+        let db = get_db(path)?;
+        let read = db.reader()?.read_header_number(hash)?;
+        assert_eq!(read.0, num);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_account_accessor() -> Result<()> {
+        let who: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2".parse()?;
+        let acct = Account {
+            nonce: 1,
+            incarnation: 2,
+            balance: ethers::types::U256::MAX,
+            codehash: keccak256(vec![0xff]).into(),
+        };
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        w.put_account(who, acct)?;
+        let path = w.close()?;
+
+        let db = get_db(path)?;
+        let mut dbtx = db.reader().unwrap();
+        let read = dbtx.read_account_data(who).unwrap();
+        assert_eq!(acct, read);
+        Ok(())
+    }
+
+}

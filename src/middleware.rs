@@ -264,3 +264,67 @@ impl<M: Middleware> From<anyhow::Error> for DbMiddlewareError<M> {
         DbMiddlewareError::Anyhow(src)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{account::Account, ffi::writer::Writer, tests::{TMP_DIR, get_db} };
+    use anyhow::{Result};
+    use ethers::{
+        core::types::Address,
+        providers::{Middleware},
+        utils::keccak256,
+    };
+
+    #[tokio::test]
+    async fn test_get_balance() -> Result<()> {
+        let who: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2".parse()?;
+        let acct = Account {
+            nonce: 1,
+            incarnation: 2,
+            balance: ethers::types::U256::MAX,
+            codehash: keccak256(vec![0xff]).into(),
+        };
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        w.put_account(who, acct)?;
+        let path = w.close()?;
+
+        let db = get_db(path)?;
+        let bal = db.get_balance(who, None).await.unwrap();
+        assert_eq!(bal, acct.balance);
+        Ok(())
+
+    }
+    #[tokio::test]
+    async fn test_get_storage_at() -> Result<()> {
+        let who: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2".parse()?;
+        let key = keccak256(vec![0xff]).into();
+        let val = keccak256(vec![0xff, 0xab, 0xcd]).into();
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        w.put_storage(who, key, val)?;
+        let path = w.close()?;
+
+        let db = get_db(path)?;
+        let read = db.get_storage_at(who, key, None).await?;
+        assert_eq!(read, val);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_block_number() -> Result<()> {
+        let hash = keccak256(vec![0x10]).into();
+        let num = 100;
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        w.put_head_header_hash(hash)?;
+        w.put_header_number(hash, num)?;
+        let path = w.close()?;
+
+        let db = get_db(path)?;
+        let res = db.get_block_number().await?;
+        dbg!(res);
+        assert_eq!(res, num.into());
+        Ok(())
+    }
+}
