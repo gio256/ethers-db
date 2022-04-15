@@ -7,17 +7,75 @@ use std::{ffi::CStr, fmt::Debug, marker::PhantomData, os::raw::c_char};
 const KECCAK_LENGTH: u64 = 32;
 
 extern "C" {
-    pub(crate) fn MdbxOpen(path: GoString) -> GoTuple<GoExit, GoPtr>;
+    pub(crate) fn MdbxOpen(path: GoPath) -> GoTuple<GoExit, GoPtr>;
     pub(crate) fn MdbxClose(db: GoPtr);
-    pub(crate) fn PutHeadHeaderHash(db: GoPtr, hash: GoSlice) -> GoExit;
-    pub(crate) fn PutStorage(db: GoPtr, address: GoSlice, key: GoSlice, val: GoSlice) -> GoExit;
+    pub(crate) fn PutHeadHeaderHash(db: GoPtr, hash: GoU256) -> GoExit;
+    pub(crate) fn PutStorage(db: GoPtr, address: GoAddress, key: GoU256, val: GoU256) -> GoExit;
     pub(crate) fn PutAccount(
         ptr: GoPtr,
-        address: GoSlice,
+        address: GoAddress,
         rlpAccount: GoSlice,
         incarnation: u64,
     ) -> GoExit;
 }
+
+
+#[repr(C)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GoTuple<A, B> {
+    pub a: A,
+    pub b: B,
+}
+
+#[repr(C)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GoSlice<'a> {
+    ptr: *mut c_void,
+    len: u64,
+    cap: u64,
+    _tick: std::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> From<&'a mut [u8]> for GoSlice<'a> {
+    fn from(src: &'a mut [u8]) -> Self {
+        Self {
+            ptr: src.as_mut_ptr() as *mut c_void,
+            len: src.len() as u64,
+            cap: src.len() as u64,
+            _tick: std::marker::PhantomData,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GoPath<'s> {
+    ptr: *const c_char,
+    len: i64,
+    _tick: PhantomData<&'s ()>,
+}
+
+impl<'s> From<&'s str> for GoPath<'s> {
+    // Panics if src is not null-terminated
+    fn from(src: &'s str) -> Self {
+        let cstr = CStr::from_bytes_with_nul(src.as_bytes()).expect("must null terminate cstring");
+        Self {
+            ptr: cstr.as_ptr(),
+            len: cstr.to_bytes().len() as i64,
+            _tick: PhantomData,
+        }
+    }
+}
+
+pub fn null_term(s: &str) -> String {
+    let mut s = String::from(s);
+    if s.bytes().last() != Some(0) {
+        s.push('\0')
+    }
+    s
+}
+
+// -- Newtypes for a little type safety
 
 // No methods. Don't touch it!
 #[repr(transparent)]
@@ -44,86 +102,48 @@ impl GoExit {
     }
 }
 
-#[repr(C)]
-pub(crate) struct GoTuple<A, B> {
-    pub a: A,
-    pub b: B,
-}
+#[repr(transparent)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GoAddress<'a>(GoSlice<'a>);
 
-#[repr(C)]
-pub(crate) struct GoString<'s> {
-    ptr: *const c_char,
-    len: i64,
-    _tick: PhantomData<&'s ()>,
-}
-
-impl<'s> From<&'s str> for GoString<'s> {
-    // Panics if src is not null-terminated
-    fn from(src: &'s str) -> Self {
-        let cstr = CStr::from_bytes_with_nul(src.as_bytes()).expect("must null terminate cstring");
-        Self {
-            ptr: cstr.as_ptr(),
-            len: cstr.to_bytes().len() as i64,
-            _tick: PhantomData,
-        }
-    }
-}
-pub fn null_term(s: &str) -> String {
-    let mut s = String::from(s);
-    if s.bytes().last() != Some(0) {
-        s.push('\0')
-    }
-    s
-}
-
-#[repr(C)]
-pub(crate) struct GoSlice<'a> {
-    ptr: *mut c_void,
-    len: u64,
-    cap: u64,
-    _tick: std::marker::PhantomData<&'a ()>,
-}
-
-impl<'a> From<&'a mut [u8]> for GoSlice<'a> {
-    fn from(src: &'a mut [u8]) -> Self {
-        Self {
-            ptr: src.as_mut_ptr() as *mut c_void,
-            len: src.len() as u64,
-            cap: src.len() as u64,
-            _tick: std::marker::PhantomData,
-        }
-    }
-}
-impl<'a> From<&'a mut Address> for GoSlice<'a> {
+impl<'a> From<&'a mut Address> for GoAddress<'a> {
     fn from(src: &'a mut Address) -> Self {
-        Self {
+        Self(GoSlice {
             ptr: src.as_mut_ptr() as *mut c_void,
             len: Address::len_bytes() as u64,
             cap: Address::len_bytes() as u64,
             _tick: std::marker::PhantomData,
-        }
+        })
     }
 }
-impl<'a> From<&'a mut U256> for GoSlice<'a> {
-    fn from(src: &'a mut U256) -> Self {
-        Self {
-            ptr: src.0.as_mut_ptr() as *mut c_void,
-            len: KECCAK_LENGTH,
-            cap: KECCAK_LENGTH,
-            _tick: std::marker::PhantomData,
-        }
-    }
-}
-impl<'a> From<&'a mut H256> for GoSlice<'a> {
+
+#[repr(transparent)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GoU256<'a>(GoSlice<'a>);
+
+impl<'a> From<&'a mut H256> for GoU256<'a> {
     fn from(src: &'a mut H256) -> Self {
-        Self {
+        Self(GoSlice {
             ptr: src.0.as_mut_ptr() as *mut c_void,
             len: H256::len_bytes() as u64,
             cap: H256::len_bytes() as u64,
             _tick: std::marker::PhantomData,
-        }
+        })
     }
 }
+
+impl<'a> From<&'a mut U256> for GoU256<'a> {
+    fn from(src: &'a mut U256) -> Self {
+        Self(GoSlice {
+            ptr: src.0.as_mut_ptr() as *mut c_void,
+            len: KECCAK_LENGTH,
+            cap: KECCAK_LENGTH,
+            _tick: std::marker::PhantomData,
+        })
+    }
+}
+
+
 
 impl From<Account> for RlpAccount {
     fn from(src: Account) -> Self {

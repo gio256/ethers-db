@@ -19,7 +19,7 @@ impl Writer {
         // generate db path and open db
         let path = tempfile::Builder::new().tempdir_in(p)?.into_path();
         let s = null_term(path.to_str().unwrap());
-        let go_path = GoString::from(s.as_ref());
+        let go_path = GoPath::from(s.as_ref());
 
         let GoTuple { a: exit, b: db_ptr } = unsafe { MdbxOpen(go_path) };
         exit.ok_or_fmt("MdbxOpen")?;
