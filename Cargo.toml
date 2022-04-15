@@ -8,9 +8,6 @@ edition = "2021"
 [lib]
 name = "ethers_db"
 path = "src/lib.rs"
-[[bin]]
-name = "txgen"
-path = "src/txgen.rs"
 
 [dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs" }
