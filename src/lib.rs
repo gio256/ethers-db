@@ -54,7 +54,6 @@ mod tests {
 
         let bal = db.get_balance(who, None).await.unwrap();
         assert_eq!(bal, acct.balance);
-
         Ok(())
     }
 
@@ -71,7 +70,20 @@ mod tests {
         let db = get_db(path)?;
         let read = db.get_storage_at(who, key, None).await?;
         assert_eq!(read, val);
+        Ok(())
+    }
 
+    #[tokio::test]
+    async fn test_read_head_header_hash() -> Result<()> {
+        let hash = keccak256(vec![0xab]).into();
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        w.put_head_header_hash(hash)?;
+        let path = w.close()?;
+
+        let db = get_db(path)?;
+        let read = db.reader()?.read_head_header_hash()?;
+        assert_eq!(read, hash);
         Ok(())
     }
 

@@ -41,8 +41,8 @@ func MdbxOpen(path string) (exit int, ptr C.uintptr_t) {
 
 // Takes a pointer to a kv.RwDB instance. Closes the db and deletes the pointer handle.
 //export MdbxClose
-func MdbxClose(ptr C.uintptr_t) {
-	handle := cgo.Handle(ptr)
+func MdbxClose(dbPtr C.uintptr_t) {
+	handle := cgo.Handle(dbPtr)
 	db := handle.Value().(kv.RwDB)
 	db.Close()
 	handle.Delete()
@@ -50,9 +50,8 @@ func MdbxClose(ptr C.uintptr_t) {
 }
 
 //export PutAccount
-func PutAccount(ptr C.uintptr_t, address []byte, rlpAccount []byte, incarnation uint64) (exit int) {
-
-	db := cgo.Handle(ptr).Value().(kv.RwDB)
+func PutAccount(dbPtr C.uintptr_t, address []byte, rlpAccount []byte, incarnation uint64) (exit int) {
+	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
 
 	var acct accounts.Account
 	if err := acct.DecodeForHashing(rlpAccount); err != nil {
@@ -61,20 +60,12 @@ func PutAccount(ptr C.uintptr_t, address []byte, rlpAccount []byte, incarnation 
 	}
 	acct.Incarnation = incarnation
 
-	ctx := context.Background()
-	tx, err := db.BeginRw(ctx)
+	tx, closer, err := begin(db)
 	if err != nil {
 		log.Println(err)
 		return -1
 	}
-	defer func() {
-		if err == nil {
-			err = tx.Commit()
-		}
-		if err != nil {
-			tx.Rollback()
-		}
-	}()
+	defer closer(&err)
 
 	w := state.NewPlainStateWriterNoHistory(tx)
 	err = w.UpdateAccountData(common.BytesToAddress(address), new(accounts.Account), &acct)
@@ -87,35 +78,26 @@ func PutAccount(ptr C.uintptr_t, address []byte, rlpAccount []byte, incarnation 
 }
 
 //export PutStorage
-func PutStorage(ptr C.uintptr_t, addressB []byte, keyB []byte, valB []byte) (exit int) {
+func PutStorage(dbPtr C.uintptr_t, address []byte, key []byte, val []byte) (exit int) {
+	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
 
-	db := cgo.Handle(ptr).Value().(kv.RwDB)
-
-	address := common.BytesToAddress(addressB)
-	key := common.BytesToHash(keyB)
-	val, overflow := uint256.FromBig(common.BytesToHash(valB).Big())
+	who := common.BytesToAddress(address)
+	k := common.BytesToHash(key)
+	v, overflow := uint256.FromBig(common.BytesToHash(val).Big())
 	if overflow {
-		log.Printf("Overflowed int conversion %x\n", valB)
+		log.Printf("Overflowed int conversion %x\n", val)
 		return -1
 	}
 
-	ctx := context.Background()
-	tx, err := db.BeginRw(ctx)
+	tx, closer, err := begin(db)
 	if err != nil {
 		log.Println(err)
 		return -1
 	}
-	defer func() {
-		if err == nil {
-			err = tx.Commit()
-		}
-		if err != nil {
-			tx.Rollback()
-		}
-	}()
+	defer closer(&err)
 
 	var acct accounts.Account
-	exists, err := rawdb.ReadAccount(tx, address, &acct)
+	exists, err := rawdb.ReadAccount(tx, who, &acct)
 	if err != nil {
 		log.Println(err)
 		return -1
@@ -127,11 +109,50 @@ func PutStorage(ptr C.uintptr_t, addressB []byte, keyB []byte, valB []byte) (exi
 	}
 
 	w := state.NewPlainStateWriterNoHistory(tx)
-	err = w.WriteAccountStorage(address, incarnation, &key, new(uint256.Int), val)
+	err = w.WriteAccountStorage(who, incarnation, &k, new(uint256.Int), v)
 	if err != nil {
 		log.Println(err)
 		return -1
 	}
 
 	return 1
+}
+
+//export PutHeadHeaderHash
+func PutHeadHeaderHash(dbPtr C.uintptr_t, hash []byte) (exit int) {
+	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
+	h := common.BytesToHash(hash)
+
+	tx, closer, err := begin(db)
+	if err != nil {
+		log.Println(err)
+		return -1
+	}
+	defer closer(&err)
+
+	err = rawdb.WriteHeadHeaderHash(tx, h)
+	if err != nil {
+		log.Println(err)
+		return -1
+	}
+
+	return 1
+}
+
+func begin(db kv.RwDB) (tx kv.RwTx, closer func(*error), err error) {
+	ctx := context.Background()
+	tx, err = db.BeginRw(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	closer = func(e *error) {
+		if *e == nil {
+			*e = tx.Commit()
+		}
+		if *e != nil {
+			tx.Rollback()
+		}
+	}
+	return tx, closer, nil
 }

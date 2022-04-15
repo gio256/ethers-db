@@ -9,6 +9,7 @@ const KECCAK_LENGTH: u64 = 32;
 extern "C" {
     pub(crate) fn MdbxOpen(path: GoString) -> GoTuple<GoExit, GoPtr>;
     pub(crate) fn MdbxClose(db: GoPtr);
+    pub(crate) fn PutHeadHeaderHash(db: GoPtr, hash: GoSlice) -> GoExit;
     pub(crate) fn PutStorage(db: GoPtr, address: GoSlice, key: GoSlice, val: GoSlice) -> GoExit;
     pub(crate) fn PutAccount(
         ptr: GoPtr,
