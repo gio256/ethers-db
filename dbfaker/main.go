@@ -22,11 +22,11 @@ import (
 func main() {}
 
 // Opens a new mdbx instance at the provided path, returning an ffi-safe
-// pointer to a go function which returns this created db instance. This
-// pointer should be tracked by the caller and passed into the other methods
-// that wish to interact with the same db instance. The pointer (or, the
-// cgo.Handle that keeps the pointer alive) consumes resources and must be
-// deleted in order for the garbage collector to clean it up (call MdbxClose).
+// pointer the kv.RwDB struct. This pointer should be tracked by the caller
+// and passed into the other methods that wish to interact with the same db
+// instance. The pointer (or, the cgo.Handle that keeps the pointer alive)
+// consumes resources and must be deleted in order for the garbage collector
+// to clean it up (call MdbxClose).
 //export MdbxOpen
 func MdbxOpen(path string) (exit int, ptr C.uintptr_t) {
 	logger := erigonLog.New()
@@ -35,17 +35,15 @@ func MdbxOpen(path string) (exit int, ptr C.uintptr_t) {
 		log.Print(err)
 		return -1, *new(C.uintptr_t)
 	}
-	f := func() kv.RwDB { return db }
-	ptr = C.uintptr_t(cgo.NewHandle(f))
+	ptr = C.uintptr_t(cgo.NewHandle(db))
 	return 1, ptr
 }
 
-// Takes a pointer to a go function returning an mdbx instance, then closes
-// that db instance and deletes the pointer handle.
+// Takes a pointer to a kv.RwDB instance. Closes the db and deletes the pointer handle.
 //export MdbxClose
 func MdbxClose(ptr C.uintptr_t) {
 	handle := cgo.Handle(ptr)
-	db := handle.Value().(func() kv.RwDB)()
+	db := handle.Value().(kv.RwDB)
 	db.Close()
 	handle.Delete()
 	log.Println("Go mdbx closed")
@@ -54,7 +52,7 @@ func MdbxClose(ptr C.uintptr_t) {
 //export PutAccount
 func PutAccount(ptr C.uintptr_t, address []byte, rlpAccount []byte, incarnation uint64) (exit int) {
 
-	db := cgo.Handle(ptr).Value().(func() kv.RwDB)()
+	db := cgo.Handle(ptr).Value().(kv.RwDB)
 
 	var acct accounts.Account
 	if err := acct.DecodeForHashing(rlpAccount); err != nil {
@@ -91,7 +89,7 @@ func PutAccount(ptr C.uintptr_t, address []byte, rlpAccount []byte, incarnation 
 //export PutStorage
 func PutStorage(ptr C.uintptr_t, addressB []byte, keyB []byte, valB []byte) (exit int) {
 
-	db := cgo.Handle(ptr).Value().(func() kv.RwDB)()
+	db := cgo.Handle(ptr).Value().(kv.RwDB)
 
 	address := common.BytesToAddress(addressB)
 	key := common.BytesToHash(keyB)
