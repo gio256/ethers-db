@@ -7,12 +7,12 @@ use std::{
 const LINK_TEST_BIN: &str = "LINK_TEST_BIN";
 
 // ** This dir gets rm -rf'd **
-const DB_RM_DIR: &str = "build/chaindata";
+const DB_TMP_DIR: &str = "tmp/chaindata";
 
 const GO_PROJECT_DIR: &str = "dbfaker";
 const GO_MAIN_FILE: &str = "main.go";
 const GO_BIN_NAME: &str = "erigon";
-const CHAINDATA_ENV_LABEL: &str = "ERIGON_CHAINDATA_DIR";
+const TMP_DIR_ENV_LABEL: &str = "CHAINDATA_TMP_DIR";
 
 // Build and link the erigon go bindings. This is only for testing, so as a hack
 // we only link if LINK_TEST_BIN is set.
@@ -43,7 +43,7 @@ fn main() {
     let path = env::current_dir().expect("cant get cwd");
     let go_dir = path.join(GO_PROJECT_DIR);
 
-    // build the go bindings
+    // build the erigon bindings
     let out_file = out_dir.join(format!("lib{}.a", GO_BIN_NAME));
     let output = Command::new("go")
         .arg("build")
@@ -59,32 +59,31 @@ fn main() {
     io::stderr().write_all(&output.stderr).unwrap();
     assert!(output.status.success(), "failed to build go bindings");
 
-    // clean db
-    let rm_dir = path.join(DB_RM_DIR);
-    if rm_dir.exists() {
-        std::fs::remove_dir_all(rm_dir.clone()).expect("couldn't clean database");
+    // clean temp DBs
+    let tmp_dir = path.join(DB_TMP_DIR);
+    if tmp_dir.exists() {
+        std::fs::remove_dir_all(tmp_dir.clone()).expect("couldn't clean database");
     }
     // recreate chaindata dir
-    std::fs::create_dir_all(&rm_dir).expect(&format!(
+    std::fs::create_dir_all(&tmp_dir).expect(&format!(
         "could not create dir: {}",
-        rm_dir.to_string_lossy()
+        tmp_dir.to_str().unwrap()
     ));
 
-    // tell the tests where to find the db
+    // tell the tests where to put temp DBs
     println!(
         "cargo:rustc-env={}={}",
-        CHAINDATA_ENV_LABEL,
-        rm_dir.to_str().unwrap()
+        TMP_DIR_ENV_LABEL,
+        tmp_dir.to_str().unwrap()
     );
 
-    // tell cargo to link the bindings
+    // tell cargo to link the erigon bindings
     println!("cargo:rustc-link-lib=static={}", GO_BIN_NAME);
     println!(
         "cargo:rustc-link-search=native={}",
         out_dir.to_str().unwrap()
     );
 
-    // also re-run build script any time the go bindings or db change
+    // also re-run build script any time the erigon bindings change
     println!("cargo:rerun-if-changed={}", go_dir.to_str().unwrap());
-    println!("cargo:rerun-if-changed={}", rm_dir.to_str().unwrap());
 }

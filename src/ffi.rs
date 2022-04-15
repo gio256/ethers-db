@@ -1,13 +1,99 @@
+const KECCAK_LENGTH: u64 = 32;
+
 #[cfg(test)]
 pub mod ffi {
+    use super::*;
     use crate::account::Account;
-    use ethers::types::{Address, U256, H256};
-    use akula::models::{RlpAccount};
-    use anyhow::Result;
+    use akula::models::RlpAccount;
+    use anyhow::{bail, Result};
+    use ethers::types::{Address, H256, U256};
     use fastrlp::*;
-    use libc::c_void;
+    use libc::{c_void, uintptr_t};
+    use std::{
+        ffi::CString,
+        mem,
+        os::raw::c_char,
+        path::{Path, PathBuf},
+    };
 
-    const KECCAK_LENGTH: u64 = 32;
+    pub struct Writer {
+        path: PathBuf,
+        db_ptr: GoPtr,
+    }
+    impl Writer {
+        pub fn open<P: AsRef<Path>>(p: P) -> Result<Self> {
+            // generate db path and open db
+            let path = tempfile::Builder::new().tempdir_in(p)?.into_path();
+            let c_path = CString::new(path.to_str().unwrap()).unwrap();
+            let go_path = GoString {
+                a: c_path.as_ptr(),
+                b: c_path.as_bytes().len() as i64,
+            };
+            let GoTuple { a: exit, b: db_ptr } = unsafe { MdbxOpen(go_path) };
+
+            if exit < 1 {
+                bail!("MdbxOpen failed with exit code {}", exit)
+            }
+            Ok(Self {
+                path: path.to_path_buf(),
+                db_ptr,
+            })
+        }
+        pub fn put_account(&mut self, mut who: Address, acct: Account) -> Result<()> {
+            let rlp_acct: RlpAccount = acct.into();
+            let mut buf = vec![];
+            rlp_acct.encode(&mut buf);
+
+            let exit = unsafe {
+                PutAccount(
+                    self.db_ptr,
+                    (&mut who).into(),
+                    (&mut buf[..]).into(),
+                    acct.incarnation,
+                )
+            };
+            if exit < 1 {
+                bail!("MdbxOpen failed with exit code {}", exit)
+            }
+            Ok(())
+        }
+
+        pub fn put_storage(
+            &mut self,
+            mut who: Address,
+            mut key: H256,
+            mut val: H256,
+        ) -> Result<()> {
+            let exit = unsafe {
+                PutStorage(
+                    self.db_ptr,
+                    (&mut who).into(),
+                    (&mut key).into(),
+                    (&mut val).into(),
+                )
+            };
+            if exit < 1 {
+                bail!("MdbxOpen failed with exit code {}", exit)
+            }
+            Ok(())
+        }
+
+        pub fn close(mut self) -> Result<PathBuf> {
+            unsafe { MdbxClose(self.db_ptr) }
+            // consume without running drop()
+            let path = mem::replace(&mut self.path, PathBuf::new());
+            mem::forget(self);
+            Ok(path)
+        }
+    }
+    impl Drop for Writer {
+        fn drop(&mut self) {
+            unsafe { MdbxClose(self.db_ptr) }
+        }
+    }
+
+    type GoPtr = uintptr_t;
+    type GoExit = i64;
 
     #[repr(C)]
     struct GoSlice<'a> {
@@ -15,6 +101,18 @@ pub mod ffi {
         len: u64,
         cap: u64,
         _tick: std::marker::PhantomData<&'a usize>,
+    }
+
+    #[repr(C)]
+    struct GoString {
+        a: *const c_char,
+        b: i64,
+    }
+
+    #[repr(C)]
+    struct GoTuple<A, B> {
+        a: A,
+        b: B,
     }
 
     impl<'a> From<&'a mut [u8]> for GoSlice<'a> {
@@ -72,26 +170,14 @@ pub mod ffi {
     }
 
     extern "C" {
-        fn PutAccount(address: GoSlice, rlpAccount: GoSlice, incarnation: u64);
-        fn PutStorage(address: GoSlice, key: GoSlice, val: GoSlice);
-        fn DbInit();
-    }
-
-    pub fn db_init() {
-        unsafe { DbInit() }
-    }
-
-    pub fn put_account(mut who: Address, acct: Account) -> Result<()> {
-        let rlp_acct: RlpAccount = acct.into();
-        let mut buf = vec![];
-        rlp_acct.encode(&mut buf);
-
-        unsafe { PutAccount((&mut who).into(), (&mut buf[..]).into(), acct.incarnation) };
-        Ok(())
-    }
-
-    pub fn put_storage(mut who: Address, mut key: H256, mut val: H256) -> Result<()> {
-        unsafe { PutStorage((&mut who).into(), (&mut key).into(), (&mut val).into()) };
-        Ok(())
+        fn MdbxOpen(path: GoString) -> GoTuple<GoExit, GoPtr>;
+        fn MdbxClose(db: GoPtr);
+        fn PutStorage(db: GoPtr, address: GoSlice, key: GoSlice, val: GoSlice) -> GoExit;
+        fn PutAccount(
+            ptr: GoPtr,
+            address: GoSlice,
+            rlpAccount: GoSlice,
+            incarnation: u64,
+        ) -> GoExit;
     }
 }
