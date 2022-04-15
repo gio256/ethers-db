@@ -11,7 +11,7 @@ mod ffi;
 
 #[cfg(test)]
 mod tests {
-    use super::{account::Account, ffi::ffi, middleware::DbMiddleware, utils::*};
+    use super::{account::Account, ffi::writer::Writer, middleware::DbMiddleware, utils::*};
     use anyhow::{format_err, Result};
     use ethers::{
         core::types::Address,
@@ -58,7 +58,7 @@ mod tests {
             codehash: keccak256(vec![0xff]).into(),
         };
 
-        let mut w = ffi::Writer::open(TMP_DIR.clone())?;
+        let mut w = Writer::open(TMP_DIR.clone())?;
         w.put_account(who, acct)?;
         let path = w.close()?;
 
@@ -79,7 +79,7 @@ mod tests {
         let key = keccak256(vec![0xff]).into();
         let val = keccak256(vec![0xff, 0xab, 0xcd]).into();
 
-        let mut w = ffi::Writer::open(TMP_DIR.clone())?;
+        let mut w = Writer::open(TMP_DIR.clone())?;
         w.put_storage(who, key, val)?;
         let path = w.close()?;
 
