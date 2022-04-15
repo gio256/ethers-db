@@ -1,10 +1,9 @@
 use crate::account::Account;
 use akula::models::RlpAccount;
-use anyhow::{bail, Result};
+use anyhow::Result;
 use ethers::types::{Address, H256};
 use fastrlp::*;
 use std::{
-    ffi::CString,
     mem,
     path::{Path, PathBuf},
 };
@@ -19,19 +18,26 @@ impl Writer {
     pub fn open<P: AsRef<Path>>(p: P) -> Result<Self> {
         // generate db path and open db
         let path = tempfile::Builder::new().tempdir_in(p)?.into_path();
-        let c_path = CString::new(path.to_str().unwrap()).unwrap();
-        let go_path = (&c_path).into();
+        let s = null_term(path.to_str().unwrap());
+        let go_path = GoString::from(s.as_ref());
 
         let GoTuple { a: exit, b: db_ptr } = unsafe { MdbxOpen(go_path) };
+        exit.ok_or_fmt("MdbxOpen")?;
 
-        if exit < 1 {
-            bail!("MdbxOpen failed with exit code {}", exit)
-        }
         Ok(Self {
             path: path.to_path_buf(),
             db_ptr,
         })
     }
+
+    pub fn close(mut self) -> Result<PathBuf> {
+        unsafe { MdbxClose(self.db_ptr) }
+        // consume without running drop()
+        let path = mem::replace(&mut self.path, PathBuf::new());
+        mem::forget(self);
+        Ok(path)
+    }
+
     pub fn put_account(&mut self, mut who: Address, acct: Account) -> Result<()> {
         let rlp_acct: RlpAccount = acct.into();
         let mut buf = vec![];
@@ -45,9 +51,7 @@ impl Writer {
                 acct.incarnation,
             )
         };
-        if exit < 1 {
-            bail!("MdbxOpen failed with exit code {}", exit)
-        }
+        exit.ok_or_fmt("PutAccount")?;
         Ok(())
     }
 
@@ -60,18 +64,8 @@ impl Writer {
                 (&mut val).into(),
             )
         };
-        if exit < 1 {
-            bail!("MdbxOpen failed with exit code {}", exit)
-        }
+        exit.ok_or_fmt("PutStorage")?;
         Ok(())
-    }
-
-    pub fn close(mut self) -> Result<PathBuf> {
-        unsafe { MdbxClose(self.db_ptr) }
-        // consume without running drop()
-        let path = mem::replace(&mut self.path, PathBuf::new());
-        mem::forget(self);
-        Ok(path)
     }
 }
 impl Drop for Writer {

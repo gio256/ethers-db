@@ -218,7 +218,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
         Ok((num.as_u64().into(), hash))
     }
 
-    /// Helper fn to walk a db table and print
+    /// Helper fn to walk a db table and print key, value pairs
     pub fn walk_table_debug<T: akula::kv::Table>(
         &mut self,
         table: akula::kv::tables::ErasedTable<T>,

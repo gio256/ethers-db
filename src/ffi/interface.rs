@@ -2,7 +2,7 @@ use crate::account::Account;
 use akula::models::RlpAccount;
 use ethers::types::{Address, H256, U256};
 use libc::{c_void, uintptr_t};
-use std::{ffi::CString, os::raw::c_char};
+use std::{ffi::CStr, fmt::Debug, marker::PhantomData, os::raw::c_char};
 
 const KECCAK_LENGTH: u64 = 32;
 
@@ -18,8 +18,30 @@ extern "C" {
     ) -> GoExit;
 }
 
-pub(crate) type GoPtr = uintptr_t;
-pub(crate) type GoExit = i64;
+// No methods. Don't touch it!
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GoPtr(uintptr_t);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GoExit(i64);
+
+impl GoExit {
+    pub fn is_err(&self) -> bool {
+        self.0 < 1
+    }
+    pub fn is_ok(&self) -> bool {
+        !self.is_err()
+    }
+    pub fn ok_or_fmt<E: Debug>(&self, err_msg: E) -> anyhow::Result<i64> {
+        if self.is_ok() {
+            Ok(self.0)
+        } else {
+            anyhow::bail!("{:?} errored with exit code {}", err_msg, self.0)
+        }
+    }
+}
 
 #[repr(C)]
 pub(crate) struct GoTuple<A, B> {
@@ -28,18 +50,29 @@ pub(crate) struct GoTuple<A, B> {
 }
 
 #[repr(C)]
-pub(crate) struct GoString {
+pub(crate) struct GoString<'s> {
     ptr: *const c_char,
     len: i64,
+    _tick: PhantomData<&'s ()>,
 }
 
-impl From<&CString> for GoString {
-    fn from(src: &CString) -> Self {
+impl<'s> From<&'s str> for GoString<'s> {
+    // Panics if src is not null-terminated
+    fn from(src: &'s str) -> Self {
+        let cstr = CStr::from_bytes_with_nul(src.as_bytes()).expect("must null terminate cstring");
         Self {
-            ptr: src.as_ptr(),
-            len: src.as_bytes().len() as i64,
+            ptr: cstr.as_ptr(),
+            len: cstr.to_bytes().len() as i64,
+            _tick: PhantomData,
         }
     }
+}
+pub fn null_term(s: &str) -> String {
+    let mut s = String::from(s);
+    if s.bytes().last() != Some(0) {
+        s.push('\0')
+    }
+    s
 }
 
 #[repr(C)]
@@ -51,7 +84,7 @@ pub(crate) struct GoSlice<'a> {
 }
 
 impl<'a> From<&'a mut [u8]> for GoSlice<'a> {
-    fn from(src: &mut [u8]) -> Self {
+    fn from(src: &'a mut [u8]) -> Self {
         Self {
             ptr: src.as_mut_ptr() as *mut c_void,
             len: src.len() as u64,
