@@ -314,7 +314,6 @@ mod tests {
         Ok(())
     }
 
-    //TODO: flakes with 'attempt to multiply with overflow' akula/models/transactions 131
     #[tokio::test]
     async fn test_read_transactions() -> Result<()> {
         let mut rng = thread_rng();

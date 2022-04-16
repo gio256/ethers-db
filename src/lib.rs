@@ -87,8 +87,15 @@ mod rand {
     rand!(akula::models::Address);
     rand_unit!(akula::models::U256);
     rand_unit!(akula::models::H256);
-    rand_unit!(akula::models::ChainId);
     rand_unit!(akula::models::TxIndex);
+    impl Rand for akula::models::ChainId {
+        fn rand(rng: &mut ThreadRng) -> Self {
+            // prevent overflow when finding v for eip-155 (https://eips.ethereum.org/EIPS/eip-155)
+            // https://github.com/gio256/akula/blob/d2241fe03b0d0ada8743af625acbbe812e62f597/src/models/transaction.rs#L131
+            let max = u64::MAX / 2 - 35;
+            Self(rng.gen_range(0..max))
+        }
+    }
     impl Rand for TransactionAction {
         fn rand(rng: &mut ThreadRng) -> Self {
             if rng.gen::<bool>() {
