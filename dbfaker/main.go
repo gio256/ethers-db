@@ -7,7 +7,6 @@ import "C"
 import "runtime/cgo"
 import (
 	"context"
-	"log"
 
 	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/erigon-lib/kv"
@@ -18,7 +17,7 @@ import (
 	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/types/accounts"
-	erigonLog "github.com/ledgerwatch/log/v3"
+	"github.com/ledgerwatch/log/v3"
 )
 
 func main() {}
@@ -31,10 +30,10 @@ func main() {}
 // to clean it up (call MdbxClose).
 //export MdbxOpen
 func MdbxOpen(path string) (exit int, ptr C.uintptr_t) {
-	logger := erigonLog.New()
+	logger := log.New("Erigon mdbx", path)
 	db, err := mdbx.NewMDBX(logger).Path(path).Open()
 	if err != nil {
-		log.Print(err)
+		log.Error("mdbx open", err)
 		return -1, *new(C.uintptr_t)
 	}
 	ptr = C.uintptr_t(cgo.NewHandle(db))
@@ -48,7 +47,6 @@ func MdbxClose(dbPtr C.uintptr_t) {
 	db := handle.Value().(kv.RwDB)
 	db.Close()
 	handle.Delete()
-	// log.Println("Go mdbx closed")
 }
 
 //export PutAccount
@@ -57,14 +55,14 @@ func PutAccount(dbPtr C.uintptr_t, address []byte, rlpAccount []byte, incarnatio
 
 	var acct accounts.Account
 	if err := acct.DecodeForHashing(rlpAccount); err != nil {
-		log.Println(err)
+		log.Error("account DecodeForHashing", err)
 		return -1
 	}
 	acct.Incarnation = incarnation
 
 	tx, closer, err := begin(db)
 	if err != nil {
-		log.Println(err)
+		log.Error("tx begin", err)
 		return -1
 	}
 	defer closer(&err)
@@ -72,7 +70,7 @@ func PutAccount(dbPtr C.uintptr_t, address []byte, rlpAccount []byte, incarnatio
 	w := state.NewPlainStateWriterNoHistory(tx)
 	err = w.UpdateAccountData(common.BytesToAddress(address), new(accounts.Account), &acct)
 	if err != nil {
-		log.Println(err)
+		log.Error("UpdateAccountData", err)
 		return -1
 	}
 
@@ -85,14 +83,14 @@ func PutRawTransactions(dbPtr C.uintptr_t, txs [][]byte, baseTxId uint64) (exit 
 
 	dbtx, closer, err := begin(db)
 	if err != nil {
-		log.Println(err)
+		log.Error("tx begin", err)
 		return -1
 	}
 	defer closer(&err)
 
 	err = rawdb.WriteRawTransactions(dbtx, txs, baseTxId)
 	if err != nil {
-		log.Println(err)
+		log.Error("WriteRawTransactions", err)
 		return -1
 	}
 
@@ -105,13 +103,13 @@ func PutTransactions(dbPtr C.uintptr_t, rlpTxs [][]byte, baseTxId uint64) (exit 
 
 	txs, err := types.DecodeTransactions(rlpTxs)
 	if err != nil {
-		log.Println(err)
+		log.Error("DecodeTransactions", err)
 		return -1
 	}
 
 	dbtx, closer, err := begin(db)
 	if err != nil {
-		log.Println(err)
+		log.Error("tx begin", err)
 		return -1
 	}
 	defer closer(&err)
@@ -119,7 +117,7 @@ func PutTransactions(dbPtr C.uintptr_t, rlpTxs [][]byte, baseTxId uint64) (exit 
 
 	err = rawdb.WriteTransactions(dbtx, txs, baseTxId)
 	if err != nil {
-		log.Println(err)
+		log.Error("WriteTransactions", err)
 		return -1
 	}
 
@@ -133,21 +131,20 @@ func PutBodyForStorage(dbPtr C.uintptr_t, hash []byte, num uint64, bodyRlp []byt
 	h := common.BytesToHash(hash)
     body := new(types.BodyForStorage)
     if err := rlp.DecodeBytes(bodyRlp, body); err != nil {
-        //TODO
-        erigonLog.Error("BodyForStorage decoding err", err)
+        log.Error("BodyForStorage DecodeBytes", err)
         return -1
     }
 
 	dbtx, closer, err := begin(db)
 	if err != nil {
-		log.Println(err)
+		log.Error("tx begin", err)
 		return -1
 	}
 	defer closer(&err)
 
 	err = rawdb.WriteBodyForStorage(dbtx, h, num, body)
 	if err != nil {
-		log.Println(err)
+		log.Error("WriteBodyForStorage", err)
 		return -1
 	}
 
@@ -162,13 +159,13 @@ func PutStorage(dbPtr C.uintptr_t, address []byte, key []byte, val []byte) (exit
 	k := common.BytesToHash(key)
 	v, overflow := uint256.FromBig(common.BytesToHash(val).Big())
 	if overflow {
-		log.Printf("Overflowed int conversion %x\n", val)
+		log.Error("Overflowed int conversion %x\n", val)
 		return -1
 	}
 
 	tx, closer, err := begin(db)
 	if err != nil {
-		log.Println(err)
+		log.Error("tx begin", err)
 		return -1
 	}
 	defer closer(&err)
@@ -176,7 +173,7 @@ func PutStorage(dbPtr C.uintptr_t, address []byte, key []byte, val []byte) (exit
 	var acct accounts.Account
 	exists, err := rawdb.ReadAccount(tx, who, &acct)
 	if err != nil {
-		log.Println(err)
+		log.Error("ReadAccounts", err)
 		return -1
 	}
 
@@ -188,7 +185,7 @@ func PutStorage(dbPtr C.uintptr_t, address []byte, key []byte, val []byte) (exit
 	w := state.NewPlainStateWriterNoHistory(tx)
 	err = w.WriteAccountStorage(who, incarnation, &k, new(uint256.Int), v)
 	if err != nil {
-		log.Println(err)
+		log.Error("WriteAccountStorage", err)
 		return -1
 	}
 
@@ -202,14 +199,14 @@ func PutHeadHeaderHash(dbPtr C.uintptr_t, hash []byte) (exit int) {
 
 	tx, closer, err := begin(db)
 	if err != nil {
-		log.Println(err)
+		log.Error("tx begin", err)
 		return -1
 	}
 	defer closer(&err)
 
 	err = rawdb.WriteHeadHeaderHash(tx, h)
 	if err != nil {
-		log.Println(err)
+		log.Error("WriteHeadHeaderHash", err)
 		return -1
 	}
 
@@ -223,14 +220,14 @@ func PutHeaderNumber(dbPtr C.uintptr_t, hash []byte, num uint64) (exit int) {
 
 	tx, closer, err := begin(db)
 	if err != nil {
-		log.Println(err)
+		log.Error("tx begin", err)
 		return -1
 	}
 	defer closer(&err)
 
 	err = rawdb.WriteHeaderNumber(tx, h, num)
 	if err != nil {
-		log.Println(err)
+		log.Error("WriteHeaderNumber", err)
 		return -1
 	}
 
@@ -244,14 +241,14 @@ func PutCanonicalHash(dbPtr C.uintptr_t, hash []byte, num uint64) (exit int) {
 
 	tx, closer, err := begin(db)
 	if err != nil {
-		log.Println(err)
+		log.Error("tx begin", err)
 		return -1
 	}
 	defer closer(&err)
 
 	err = rawdb.WriteCanonicalHash(tx, h, num)
 	if err != nil {
-		log.Println(err)
+		log.Error("WriteCanonicalHash", err)
 		return -1
 	}
 
