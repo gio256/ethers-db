@@ -14,6 +14,7 @@ import (
 	"github.com/ledgerwatch/erigon-lib/kv/mdbx"
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/core/rawdb"
+	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/types/accounts"
 	erigonLog "github.com/ledgerwatch/log/v3"
@@ -69,6 +70,52 @@ func PutAccount(dbPtr C.uintptr_t, address []byte, rlpAccount []byte, incarnatio
 
 	w := state.NewPlainStateWriterNoHistory(tx)
 	err = w.UpdateAccountData(common.BytesToAddress(address), new(accounts.Account), &acct)
+	if err != nil {
+		log.Println(err)
+		return -1
+	}
+
+	return 1
+}
+
+//export PutRawTransactions
+func PutRawTransactions(dbPtr C.uintptr_t, txs [][]byte, baseTxId uint64) (exit int) {
+	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
+
+	dbtx, closer, err := begin(db)
+	if err != nil {
+		log.Println(err)
+		return -1
+	}
+	defer closer(&err)
+
+	err = rawdb.WriteRawTransactions(dbtx, txs, baseTxId)
+	if err != nil {
+		log.Println(err)
+		return -1
+	}
+
+	return 1
+}
+
+//export PutTransactions
+func PutTransactions(dbPtr C.uintptr_t, rlpTxs [][]byte, baseTxId uint64) (exit int) {
+	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
+
+	dbtx, closer, err := begin(db)
+	if err != nil {
+		log.Println(err)
+		return -1
+	}
+	defer closer(&err)
+
+    txs, err := types.DecodeTransactions(rlpTxs)
+	if err != nil {
+		log.Println(err)
+		return -1
+	}
+
+	err = rawdb.WriteTransactions(dbtx, txs, baseTxId)
 	if err != nil {
 		log.Println(err)
 		return -1
@@ -152,6 +199,27 @@ func PutHeaderNumber(dbPtr C.uintptr_t, hash []byte, num uint64) (exit int) {
 	defer closer(&err)
 
 	err = rawdb.WriteHeaderNumber(tx, h, num)
+	if err != nil {
+		log.Println(err)
+		return -1
+	}
+
+	return 1
+}
+
+//export PutCanonicalHash
+func PutCanonicalHash(dbPtr C.uintptr_t, hash []byte, num uint64) (exit int) {
+	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
+	h := common.BytesToHash(hash)
+
+	tx, closer, err := begin(db)
+	if err != nil {
+		log.Println(err)
+		return -1
+	}
+	defer closer(&err)
+
+	err = rawdb.WriteCanonicalHash(tx, h, num)
 	if err != nil {
 		log.Println(err)
 		return -1

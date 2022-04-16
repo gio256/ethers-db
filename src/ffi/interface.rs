@@ -11,15 +11,22 @@ extern "C" {
     pub(crate) fn MdbxClose(db: GoPtr);
     pub(crate) fn PutHeadHeaderHash(db: GoPtr, hash: GoU256) -> GoExit;
     pub(crate) fn PutHeaderNumber(db: GoPtr, hash: GoU256, num: u64) -> GoExit;
+    pub(crate) fn PutCanonicalHash(db: GoPtr, hash: GoU256, num: u64) -> GoExit;
     pub(crate) fn PutStorage(db: GoPtr, address: GoAddress, key: GoU256, val: GoU256) -> GoExit;
+    #[allow(unused)]
+    pub(crate) fn PutRawTransactions(db: GoPtr, txs: GoSlice, baseId: u64) -> GoExit;
+    pub(crate) fn PutTransactions(db: GoPtr, txs: GoSlice, baseId: u64) -> GoExit;
     pub(crate) fn PutAccount(
         ptr: GoPtr,
         address: GoAddress,
-        rlpAccount: GoSlice,
+        rlpAccount: GoRlp,
         incarnation: u64,
     ) -> GoExit;
 }
 
+#[repr(transparent)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GoRlp<'a>(pub GoSlice<'a>);
 
 #[repr(C)]
 #[derive(Clone, Debug, PartialEq)]
@@ -37,10 +44,20 @@ pub(crate) struct GoSlice<'a> {
     _tick: std::marker::PhantomData<&'a ()>,
 }
 
-impl<'a> From<&'a mut [u8]> for GoSlice<'a> {
-    fn from(src: &'a mut [u8]) -> Self {
+impl<'a, T> From<&'a mut [T]> for GoSlice<'a> {
+    fn from(src: &'a mut [T]) -> Self {
         Self {
             ptr: src.as_mut_ptr() as *mut c_void,
+            len: src.len() as u64,
+            cap: src.len() as u64,
+            _tick: std::marker::PhantomData,
+        }
+    }
+}
+impl<'a> From<&'a mut bytes::BytesMut> for GoSlice<'a> {
+    fn from(src: &'a mut bytes::BytesMut) -> Self {
+        Self {
+            ptr: src[..].as_mut_ptr() as *mut c_void,
             len: src.len() as u64,
             cap: src.len() as u64,
             _tick: std::marker::PhantomData,
@@ -143,8 +160,6 @@ impl<'a> From<&'a mut U256> for GoU256<'a> {
         })
     }
 }
-
-
 
 impl From<Account> for RlpAccount {
     fn from(src: Account) -> Self {

@@ -75,3 +75,25 @@ pub fn parse_u64_with_len(enc: &mut &[u8]) -> u64 {
     enc.advance(len);
     val
 }
+
+impl Account {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn nonce(mut self, nonce: u64) -> Self {
+        self.nonce = nonce;
+        self
+    }
+    pub fn incarnation(mut self, inc: u64) -> Self {
+        self.incarnation = inc;
+        self
+    }
+    pub fn balance(mut self, bal: U256) -> Self {
+        self.balance = bal;
+        self
+    }
+    pub fn codehash(mut self, hash: H256) -> Self {
+        self.codehash = hash;
+        self
+    }
+}

@@ -5,7 +5,7 @@ use akula::{
     models::{BlockHeader, BodyForStorage, MessageWithSignature},
 };
 use anyhow::{format_err, Result};
-use ethers::core::types::{Address, BlockId, H256};
+use ethers::core::types::{Address, BlockId, BlockNumber as EthersBlockNumber, H256};
 use fastrlp::Decodable;
 use mdbx::{EnvironmentKind, TransactionKind};
 use once_cell::sync::Lazy;
@@ -197,6 +197,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
         Ok(code.len())
     }
 
+    /// Returns the (block number, block hash) key used to identify a block in the db
     pub fn get_header_key<T: Into<BlockId> + Send + Sync>(&mut self, id: T) -> Result<HeaderKey> {
         let (num, hash) = match id.into() {
             BlockId::Hash(hash) => {
@@ -204,15 +205,14 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
                 (num, hash)
             }
             BlockId::Number(id) => match id {
-                ethers::core::types::BlockNumber::Number(n) => {
-                    (n, self.read_canonical_hash(n.as_u64().into())?)
-                }
-                ethers::core::types::BlockNumber::Latest => {
+                EthersBlockNumber::Number(n) => (n, self.read_canonical_hash(n.as_u64().into())?),
+                //TODO: check this https://github.com/ledgerwatch/erigon/blob/156da607e7495d709c141aec40f66a2556d35dc0/cmd/rpcdaemon/commands/rpc_block.go#L30
+                EthersBlockNumber::Latest | EthersBlockNumber::Pending => {
                     let hash = self.read_head_header_hash()?;
                     let num = self.read_header_number(hash)?;
                     (num.0.into(), hash)
                 }
-                _ => panic!("unsupported block id type"),
+                EthersBlockNumber::Earliest => (0.into(), self.read_canonical_hash(0.into())?),
             },
         };
         Ok((num.as_u64().into(), hash))
@@ -236,15 +236,19 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{account::Account, ffi::writer::Writer, tests::{TMP_DIR, get_db} };
-    use anyhow::{Result};
-    use ethers::{
-        core::types::Address,
-        utils::keccak256,
+    use crate::{
+        rand::Rand,
+        account::Account,
+        ffi::writer::Writer,
+        tests::{get_db, TMP_DIR},
     };
+    use anyhow::Result;
+    use ethers::{core::types::Address, utils::keccak256};
+    use akula::models::MessageWithSignature;
+    use rand::thread_rng;
 
     #[test]
-    fn test_read_block_number() -> Result<()> {
+    fn test_read_head_header_hash() -> Result<()> {
         let hash = keccak256(vec![0xab]).into();
 
         let mut w = Writer::open(TMP_DIR.clone())?;
@@ -272,6 +276,23 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_is_canonical_hash() -> Result<()> {
+        let hash = keccak256(vec![0x10]).into();
+        let num = 100;
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        w.put_header_number(hash, num)?;
+        w.put_canonical_hash(hash, num)?;
+        let path = w.close()?;
+
+        let db = get_db(path)?;
+        let read = db.reader()?.is_canonical_hash(hash)?;
+        dbg!(read);
+        assert!(read);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_account_accessor() -> Result<()> {
         let who: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2".parse()?;
@@ -293,4 +314,26 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_read_transactions() -> Result<()> {
+        let mut rng = thread_rng();
+        let base_id = u64::rand(&mut rng);
+        let n = 3;
+
+        let txs = (0..n).map(|_| MessageWithSignature::rand(&mut rng)).collect::<Vec<_>>();
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        w.put_transactions(txs.clone(), base_id)?;
+        let path = w.close()?;
+
+        let db = get_db(path)?;
+        let mut dbtx = db.reader().unwrap();
+        let read = dbtx.read_transactions(base_id, n).unwrap();
+
+        for (i, t) in read.enumerate() {
+            assert_eq!(t, txs[i]);
+        }
+
+        Ok(())
+    }
 }

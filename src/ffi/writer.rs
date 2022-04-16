@@ -1,7 +1,8 @@
 use crate::account::Account;
 use akula::models::RlpAccount;
 use anyhow::Result;
-use ethers::types::{Address, H256};
+use bytes::{BytesMut};
+use ethers::types::{Address, Transaction, H256};
 use fastrlp::*;
 use std::{
     mem,
@@ -40,13 +41,19 @@ impl Writer {
 
     pub fn put_head_header_hash(&mut self, mut hash: H256) -> Result<()> {
         let exit = unsafe { PutHeadHeaderHash(self.db_ptr, (&mut hash).into()) };
-        exit.ok_or_fmt("PutAccount")?;
+        exit.ok_or_fmt("PutHeadHeaderHash")?;
         Ok(())
     }
 
     pub fn put_header_number(&mut self, mut hash: H256, num: u64) -> Result<()> {
         let exit = unsafe { PutHeaderNumber(self.db_ptr, (&mut hash).into(), num) };
-        exit.ok_or_fmt("PutAccount")?;
+        exit.ok_or_fmt("PutHeaderNumber")?;
+        Ok(())
+    }
+
+    pub fn put_canonical_hash(&mut self, mut hash: H256, num: u64) -> Result<()> {
+        let exit = unsafe { PutCanonicalHash(self.db_ptr, (&mut hash).into(), num) };
+        exit.ok_or_fmt("PutCanonicalHash")?;
         Ok(())
     }
 
@@ -59,11 +66,48 @@ impl Writer {
             PutAccount(
                 self.db_ptr,
                 (&mut who).into(),
-                (&mut buf[..]).into(),
+                GoRlp((&mut buf[..]).into()),
                 acct.incarnation,
             )
         };
         exit.ok_or_fmt("PutAccount")?;
+        Ok(())
+    }
+
+    //TODO: encoding is broken
+    #[allow(unused)]
+    pub fn put_raw_transactions<T: IntoIterator<Item = Transaction>>(
+        &mut self,
+        txs: T,
+        base_id: u64,
+    ) -> Result<()> {
+        let mut txs = txs.into_iter().map(|tx| tx.rlp().0).collect::<Vec<_>>();
+
+        let exit = unsafe { PutRawTransactions(self.db_ptr, (&mut txs[..]).into(), base_id) };
+        exit.ok_or_fmt("PutRawTransactions")?;
+        Ok(())
+    }
+
+    pub fn put_transactions<T: IntoIterator<Item = akula::models::MessageWithSignature>>(
+        &mut self,
+        txs: T,
+        base_id: u64,
+    ) -> Result<()> {
+        let mut bufs = vec![];
+        for tx in txs.into_iter() {
+            let mut buf = BytesMut::new();
+            tx.encode(&mut buf);
+            bufs.push(buf);
+        }
+        let mut go_slices = vec![];
+        for buf in bufs.iter_mut() {
+            go_slices.push(GoSlice::from(buf))
+        }
+
+        let exit =
+            unsafe { PutTransactions(self.db_ptr, GoSlice::from(&mut go_slices[..]), base_id) };
+        exit.ok_or_fmt("PutTransactions")?;
+
         Ok(())
     }
 
