@@ -48,8 +48,8 @@ mod tests {
 #[cfg(test)]
 mod rand {
     use akula::models::{
-        Address, ChainId, Message, MessageSignature, MessageWithSender, MessageWithSignature,
-        TransactionAction, H256, U256,
+        Address, BodyForStorage, Message, MessageSignature, MessageWithSender,
+        MessageWithSignature, TransactionAction, H256,
     };
     use ethers::core::k256::{
         ecdsa::{recoverable::Signature, signature::Signer, SigningKey},
@@ -80,11 +80,15 @@ mod rand {
             }
         };
     }
+    rand!(u32);
     rand!(u64);
     rand!([u128; 2]);
-    rand!(Address);
-    rand_unit!(U256);
-    rand_unit!(ChainId);
+    rand!([u8; 32]);
+    rand!(akula::models::Address);
+    rand_unit!(akula::models::U256);
+    rand_unit!(akula::models::H256);
+    rand_unit!(akula::models::ChainId);
+    rand_unit!(akula::models::TxIndex);
     impl Rand for TransactionAction {
         fn rand(rng: &mut ThreadRng) -> Self {
             if rng.gen::<bool>() {
@@ -197,5 +201,15 @@ mod rand {
             H256::from_slice(s.as_slice()),
         )
         .expect("Generated a bad signature")
+    }
+
+    impl Rand for BodyForStorage {
+        fn rand(rng: &mut ThreadRng) -> Self {
+            Self {
+                base_tx_id: Rand::rand(rng),
+                tx_amount: u32::rand(rng).into(), // erigon stores TxAmount as uint32
+                uncles: Default::default(),
+            }
+        }
     }
 }

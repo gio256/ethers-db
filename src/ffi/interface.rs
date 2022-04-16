@@ -16,6 +16,7 @@ extern "C" {
     #[allow(unused)]
     pub(crate) fn PutRawTransactions(db: GoPtr, txs: GoSlice, baseId: u64) -> GoExit;
     pub(crate) fn PutTransactions(db: GoPtr, txs: GoSlice, baseId: u64) -> GoExit;
+    pub(crate) fn PutBodyForStorage(db: GoPtr, hash: GoU256, num: u64, body: GoRlp) -> GoExit;
     pub(crate) fn PutAccount(
         ptr: GoPtr,
         address: GoAddress,

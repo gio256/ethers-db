@@ -13,9 +13,10 @@ import (
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon-lib/kv/mdbx"
 	"github.com/ledgerwatch/erigon/common"
+	"github.com/ledgerwatch/erigon/rlp"
 	"github.com/ledgerwatch/erigon/core/rawdb"
-	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/state"
+	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/types/accounts"
 	erigonLog "github.com/ledgerwatch/log/v3"
 )
@@ -102,6 +103,12 @@ func PutRawTransactions(dbPtr C.uintptr_t, txs [][]byte, baseTxId uint64) (exit 
 func PutTransactions(dbPtr C.uintptr_t, rlpTxs [][]byte, baseTxId uint64) (exit int) {
 	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
 
+	txs, err := types.DecodeTransactions(rlpTxs)
+	if err != nil {
+		log.Println(err)
+		return -1
+	}
+
 	dbtx, closer, err := begin(db)
 	if err != nil {
 		log.Println(err)
@@ -109,13 +116,36 @@ func PutTransactions(dbPtr C.uintptr_t, rlpTxs [][]byte, baseTxId uint64) (exit 
 	}
 	defer closer(&err)
 
-    txs, err := types.DecodeTransactions(rlpTxs)
+
+	err = rawdb.WriteTransactions(dbtx, txs, baseTxId)
 	if err != nil {
 		log.Println(err)
 		return -1
 	}
 
-	err = rawdb.WriteTransactions(dbtx, txs, baseTxId)
+	return 1
+}
+
+//export PutBodyForStorage
+func PutBodyForStorage(dbPtr C.uintptr_t, hash []byte, num uint64, bodyRlp []byte) (exit int) {
+	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
+
+	h := common.BytesToHash(hash)
+    body := new(types.BodyForStorage)
+    if err := rlp.DecodeBytes(bodyRlp, body); err != nil {
+        //TODO
+        erigonLog.Error("BodyForStorage decoding err", err)
+        return -1
+    }
+
+	dbtx, closer, err := begin(db)
+	if err != nil {
+		log.Println(err)
+		return -1
+	}
+	defer closer(&err)
+
+	err = rawdb.WriteBodyForStorage(dbtx, h, num, body)
 	if err != nil {
 		log.Println(err)
 		return -1

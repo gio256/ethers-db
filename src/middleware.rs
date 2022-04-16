@@ -273,11 +273,7 @@ mod tests {
         tests::{get_db, TMP_DIR},
     };
     use anyhow::Result;
-    use ethers::{
-        core::types::{Address},
-        providers::Middleware,
-        utils::keccak256,
-    };
+    use ethers::{core::types::Address, providers::Middleware, utils::keccak256};
 
     #[tokio::test]
     async fn test_get_balance() -> Result<()> {

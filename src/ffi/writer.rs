@@ -1,7 +1,7 @@
 use crate::account::Account;
-use akula::models::RlpAccount;
+use akula::models::{BodyForStorage, RlpAccount};
 use anyhow::Result;
-use bytes::{BytesMut};
+use bytes::BytesMut;
 use ethers::types::{Address, Transaction, H256};
 use fastrlp::*;
 use std::{
@@ -74,6 +74,19 @@ impl Writer {
         Ok(())
     }
 
+    pub fn put_storage(&mut self, mut who: Address, mut key: H256, mut val: H256) -> Result<()> {
+        let exit = unsafe {
+            PutStorage(
+                self.db_ptr,
+                (&mut who).into(),
+                (&mut key).into(),
+                (&mut val).into(),
+            )
+        };
+        exit.ok_or_fmt("PutStorage")?;
+        Ok(())
+    }
+
     //TODO: encoding is broken
     #[allow(unused)]
     pub fn put_raw_transactions<T: IntoIterator<Item = Transaction>>(
@@ -111,16 +124,24 @@ impl Writer {
         Ok(())
     }
 
-    pub fn put_storage(&mut self, mut who: Address, mut key: H256, mut val: H256) -> Result<()> {
+    pub fn put_body_for_storage(
+        &mut self,
+        mut hash: H256,
+        num: u64,
+        body: BodyForStorage,
+    ) -> Result<()> {
+        let mut buf = vec![];
+        body.encode(&mut buf);
+
         let exit = unsafe {
-            PutStorage(
+            PutBodyForStorage(
                 self.db_ptr,
-                (&mut who).into(),
-                (&mut key).into(),
-                (&mut val).into(),
+                GoU256::from(&mut hash),
+                num,
+                GoRlp((&mut buf[..]).into()),
             )
         };
-        exit.ok_or_fmt("PutStorage")?;
+        exit.ok_or_fmt("PutBodyForStorage")?;
         Ok(())
     }
 }

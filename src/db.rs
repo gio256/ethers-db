@@ -80,6 +80,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
         let mut body = <akula::models::BodyForStorage as Decodable>::decode(&mut &*raw_body)
             .map_err(|e| format_err!("BodyForStorage decode error: {}", e))?;
 
+        //TODO move this into read_body
         // Skip 1 system tx at the beginning of the block and 1 at the end
         // https://github.com/ledgerwatch/erigon/blob/f56d4c5881822e70f65927ade76ef05bfacb1df4/core/rawdb/accessors_chain.go#L602-L605
         body.base_tx_id.0 += 1;
@@ -237,14 +238,14 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        rand::Rand,
         account::Account,
         ffi::writer::Writer,
+        rand::Rand,
         tests::{get_db, TMP_DIR},
     };
+    use akula::models::{BodyForStorage, MessageWithSignature, H256};
     use anyhow::Result;
     use ethers::{core::types::Address, utils::keccak256};
-    use akula::models::MessageWithSignature;
     use rand::thread_rng;
 
     #[test]
@@ -288,7 +289,6 @@ mod tests {
 
         let db = get_db(path)?;
         let read = db.reader()?.is_canonical_hash(hash)?;
-        dbg!(read);
         assert!(read);
         Ok(())
     }
@@ -314,13 +314,16 @@ mod tests {
         Ok(())
     }
 
+    //TODO: flakes with 'attempt to multiply with overflow' akula/models/transactions 131
     #[tokio::test]
     async fn test_read_transactions() -> Result<()> {
         let mut rng = thread_rng();
         let base_id = u64::rand(&mut rng);
         let n = 3;
 
-        let txs = (0..n).map(|_| MessageWithSignature::rand(&mut rng)).collect::<Vec<_>>();
+        let txs = (0..n)
+            .map(|_| MessageWithSignature::rand(&mut rng))
+            .collect::<Vec<_>>();
 
         let mut w = Writer::open(TMP_DIR.clone())?;
         w.put_transactions(txs.clone(), base_id)?;
@@ -333,6 +336,29 @@ mod tests {
         for (i, t) in read.enumerate() {
             assert_eq!(t, txs[i]);
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_read_body_for_storage() -> Result<()> {
+        let mut rng = thread_rng();
+        let hash = H256::rand(&mut rng);
+        let num = u64::rand(&mut rng);
+        let body = BodyForStorage::rand(&mut rng);
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        w.put_body_for_storage(hash, num, body.clone())?;
+        let path = w.close()?;
+
+        let db = get_db(path)?;
+        let mut dbtx = db.reader().unwrap();
+        let key = (num.into(), hash);
+        let read = dbtx.read_body_for_storage(key).unwrap();
+
+        assert_eq!(read.base_tx_id, body.base_tx_id + 1);
+        assert_eq!(read.tx_amount + 2, body.tx_amount);
+        assert_eq!(read.uncles, body.uncles);
 
         Ok(())
     }
