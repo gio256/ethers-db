@@ -7,6 +7,7 @@ import "C"
 import "runtime/cgo"
 import (
 	"context"
+    // llog "log"
 
 	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/erigon-lib/kv"
@@ -147,6 +148,27 @@ func PutBodyForStorage(dbPtr C.uintptr_t, hash []byte, num uint64, bodyRlp []byt
 		log.Error("WriteBodyForStorage", err)
 		return -1
 	}
+
+	return 1
+}
+
+// blockNum is a big.Int
+//export PutTxLookupEntries
+func PutTxLookupEntries(dbPtr C.uintptr_t, blockNum []byte, txHashes [][]byte) (exit int) {
+	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
+
+	dbtx, closer, err := begin(db)
+	if err != nil {
+		log.Error("tx begin", err)
+		return -1
+	}
+	defer closer(&err)
+
+    for _, hash := range txHashes {
+        if err = dbtx.Put(kv.TxLookup, hash, blockNum); err != nil {
+            log.Error("failed to store TxLookup entry", "err", err)
+        }
+    }
 
 	return 1
 }

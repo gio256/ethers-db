@@ -241,7 +241,7 @@ mod tests {
         rand::Rand,
         tests::{get_db, TMP_DIR},
     };
-    use akula::models::{BodyForStorage, MessageWithSignature, H256};
+    use akula::models::{self as ak_models, BodyForStorage, MessageWithSignature, H256};
     use anyhow::Result;
     use ethers::{core::types::Address, utils::keccak256};
     use rand::thread_rng;
@@ -291,8 +291,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_account_accessor() -> Result<()> {
+    #[test]
+    fn test_account_accessor() -> Result<()> {
         let who: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2".parse()?;
         let acct = Account {
             nonce: 1,
@@ -312,8 +312,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_read_transactions() -> Result<()> {
+    #[test]
+    fn test_read_transactions() -> Result<()> {
         let mut rng = thread_rng();
         let base_id = u64::rand(&mut rng);
         let n = 3;
@@ -333,12 +333,11 @@ mod tests {
         for (i, t) in read.enumerate() {
             assert_eq!(t, txs[i]);
         }
-
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_read_body_for_storage() -> Result<()> {
+    #[test]
+    fn test_read_body_for_storage() -> Result<()> {
         let mut rng = thread_rng();
         let hash = H256::rand(&mut rng);
         let num = u64::rand(&mut rng);
@@ -356,7 +355,26 @@ mod tests {
         assert_eq!(read.base_tx_id, body.base_tx_id + 1);
         assert_eq!(read.tx_amount + 2, body.tx_amount);
         assert_eq!(read.uncles, body.uncles);
-
         Ok(())
+    }
+
+    #[test]
+    fn test_read_transaction_block_number() -> Result<()> {
+        let mut rng = thread_rng();
+        let block_num = ak_models::BlockNumber::rand(&mut rng);
+        let tx_hashes = (0..5).map(|_| H256::rand(&mut rng)).collect::<Vec<_>>();
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        w.put_tx_lookup_entries(block_num, tx_hashes.clone())?;
+        let path = w.close()?;
+
+        let db = get_db(path)?;
+        let mut dbtx = db.reader().unwrap();
+        for hash in tx_hashes {
+            let read = dbtx.read_transaction_block_number(hash).unwrap();
+            assert_eq!(read, block_num);
+        }
+        Ok(())
+
     }
 }

@@ -1,5 +1,5 @@
 use crate::account::Account;
-use akula::models::{BodyForStorage, RlpAccount};
+use akula::models::{self as ak_models, BodyForStorage, RlpAccount};
 use anyhow::Result;
 use bytes::BytesMut;
 use ethers::types::{Address, Transaction, H256};
@@ -101,7 +101,7 @@ impl Writer {
         Ok(())
     }
 
-    pub fn put_transactions<T: IntoIterator<Item = akula::models::MessageWithSignature>>(
+    pub fn put_transactions<T: IntoIterator<Item = ak_models::MessageWithSignature>>(
         &mut self,
         txs: T,
         base_id: u64,
@@ -142,6 +142,24 @@ impl Writer {
             )
         };
         exit.ok_or_fmt("PutBodyForStorage")?;
+        Ok(())
+    }
+
+    pub fn put_tx_lookup_entries<T: IntoIterator<Item = ak_models::H256>>(
+        &mut self,
+        block_num: ak_models::BlockNumber,
+        tx_hashes: T,
+    ) -> Result<()> {
+        let mut num = block_num.0.to_be_bytes();
+        let mut tx_hashes = tx_hashes.into_iter().collect::<Vec<_>>();
+
+        let mut bufs = vec![];
+        for hash in tx_hashes.iter_mut() {
+            bufs.push(GoU256::from(hash));
+        }
+
+        let exit = unsafe { PutTxLookupEntries(self.db_ptr, (&mut num[..]).into(), GoSlice::from(&mut bufs[..]) )};
+        exit.ok_or_fmt("PutTxLookupEntries")?;
         Ok(())
     }
 }

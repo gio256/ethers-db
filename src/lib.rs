@@ -87,6 +87,7 @@ mod rand {
     rand!(akula::models::Address);
     rand_unit!(akula::models::U256);
     rand_unit!(akula::models::H256);
+    rand_unit!(akula::models::BlockNumber);
     rand_unit!(akula::models::TxIndex);
     impl Rand for akula::models::ChainId {
         fn rand(rng: &mut ThreadRng) -> Self {
