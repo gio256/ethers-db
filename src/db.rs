@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use akula::{
-    kv::{mdbx::MdbxTransaction, tables, tables::HeaderKey, traits::TableEncode},
-    models::{BlockHeader, BodyForStorage, MessageWithSignature},
+    kv::{mdbx::MdbxTransaction, tables as ak_tables, traits::TableEncode},
+    models as ak_models,
 };
 use anyhow::{format_err, Result};
 use ethers::core::types::{Address, BlockId, BlockNumber as EthersBlockNumber, H256};
@@ -10,7 +10,7 @@ use fastrlp::Decodable;
 use mdbx::{EnvironmentKind, TransactionKind};
 use once_cell::sync::Lazy;
 
-use crate::account::Account;
+use crate::{account::Account, tables};
 
 pub static EMPTY_CODEHASH: Lazy<H256> = Lazy::new(|| ethers::utils::keccak256(vec![]).into());
 
@@ -26,58 +26,55 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     /// Returns the hash of the current canonical head header.
     pub fn read_head_header_hash(&mut self) -> Result<H256> {
         self.0
-            .get(
-                crate::tables::LastHeader,
-                String::from("LastHeader").into_bytes(),
-            )
+            .get(tables::LastHeader, String::from("LastHeader").into_bytes())
             .map(|res| res.unwrap_or_default())
     }
 
     /// Returns the hash of the current canonical head block.
     pub fn read_head_block_hash(&mut self) -> Result<H256> {
         self.0
-            .get(
-                crate::tables::LastBlock,
-                String::from("LastBlock").into_bytes(),
-            )
+            .get(tables::LastBlock, String::from("LastBlock").into_bytes())
             .map(|res| res.unwrap_or_default())
     }
 
     /// Returns the header number assigned to a hash
-    pub fn read_header_number(&mut self, hash: H256) -> Result<akula::models::BlockNumber> {
+    pub fn read_header_number(&mut self, hash: H256) -> Result<ak_models::BlockNumber> {
         self.0
-            .get(tables::HeaderNumber, hash)
+            .get(ak_tables::HeaderNumber, hash)
             .map(|res| res.unwrap_or_default())
     }
 
     /// Returns the number of the current canonical block header
-    pub fn read_head_block_number(&mut self) -> Result<akula::models::BlockNumber> {
+    pub fn read_head_block_number(&mut self) -> Result<ak_models::BlockNumber> {
         let hash = self.read_head_header_hash()?;
         self.read_header_number(hash)
     }
 
     /// Returns the block header identified by the (block number, block hash) key
-    pub fn read_header(&mut self, key: HeaderKey) -> Result<BlockHeader> {
+    pub fn read_header(&mut self, key: ak_tables::HeaderKey) -> Result<ak_models::BlockHeader> {
         let raw_header = self.read_header_rlp(key)?;
-        <BlockHeader as Decodable>::decode(&mut &*raw_header)
+        <ak_models::BlockHeader as Decodable>::decode(&mut &*raw_header)
             .map_err(|e| format_err!("cant decode header: {}", e))
     }
 
     /// Returns the raw RLP encoded block header identified by the (block number, block hash) key
-    pub fn read_header_rlp(&mut self, key: HeaderKey) -> Result<Vec<u8>> {
+    pub fn read_header_rlp(&mut self, key: ak_tables::HeaderKey) -> Result<Vec<u8>> {
         self.0
-            .get(akula::kv::tables::Header.erased(), key.encode().to_vec())?
+            .get(ak_tables::Header.erased(), key.encode().to_vec())?
             .ok_or_else(|| format_err!("cant find header"))
     }
 
     /// Returns the decoding of the body as stored in the BlockBody table
-    pub fn read_body_for_storage(&mut self, key: HeaderKey) -> Result<BodyForStorage> {
+    pub fn read_body_for_storage(
+        &mut self,
+        key: ak_tables::HeaderKey,
+    ) -> Result<ak_models::BodyForStorage> {
         let raw_body = self
             .0
-            .get(tables::BlockBody.erased(), key.encode().to_vec())?
+            .get(ak_tables::BlockBody.erased(), key.encode().to_vec())?
             .ok_or_else(|| format_err!("cant find body"))?;
 
-        let mut body = <akula::models::BodyForStorage as Decodable>::decode(&mut &*raw_body)
+        let mut body = <ak_models::BodyForStorage as Decodable>::decode(&mut &*raw_body)
             .map_err(|e| format_err!("BodyForStorage decode error: {}", e))?;
 
         //TODO move this into read_body
@@ -96,13 +93,10 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     }
 
     /// Returns the number of the block containing the specified transaction.
-    pub fn read_transaction_block_number(
-        &mut self,
-        hash: H256,
-    ) -> Result<akula::models::BlockNumber> {
+    pub fn read_transaction_block_number(&mut self, hash: H256) -> Result<ak_models::BlockNumber> {
         let num = self
             .0
-            .get(crate::tables::BlockTransactionLookup, hash)?
+            .get(tables::BlockTransactionLookup, hash)?
             .ok_or_else(|| format_err!("cant find tx"))?;
 
         Ok(u64::try_from(num)?.into())
@@ -113,15 +107,16 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
         &mut self,
         start_key: u64,
         n: u64,
-    ) -> Result<impl Iterator<Item = MessageWithSignature>> {
-        // Note: The BlockTransaction table is called "EthTx" in erigon
+    ) -> Result<impl Iterator<Item = ak_models::MessageWithSignature>> {
+        // BlockTransaction is Erigon's "EthTx" table
         Ok(self
             .0
-            .cursor(tables::BlockTransaction.erased())?
+            .cursor(ak_tables::BlockTransaction.erased())?
             .walk(Some(start_key.encode().to_vec()))
             .flat_map(|res| {
                 res.and_then(|(_, tx)| {
-                    Ok(<akula::models::MessageWithSignature as Decodable>::decode(
+                    //TODO: decoding issues?
+                    Ok(<ak_models::MessageWithSignature as Decodable>::decode(
                         &mut &*tx,
                     )?)
                 })
@@ -130,9 +125,9 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     }
 
     /// Returns the hash assigned to a canonical block number.
-    pub fn read_canonical_hash(&mut self, num: akula::models::BlockNumber) -> Result<H256> {
+    pub fn read_canonical_hash(&mut self, num: ak_models::BlockNumber) -> Result<H256> {
         self.0
-            .get(akula::kv::tables::CanonicalHeader, num)
+            .get(ak_tables::CanonicalHeader, num)
             .map(|res| res.unwrap_or_default())
     }
 
@@ -146,13 +141,13 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     /// Returns the decoded account data as stored in the PlainState table.
     pub fn read_account_data(&mut self, who: Address) -> Result<Account> {
         self.0
-            .get(crate::tables::PlainState, who)
+            .get(tables::PlainState, who)
             .map(|res| res.unwrap_or_default())
     }
 
     pub fn read_account_data_raw(&mut self, who: Address) -> Result<Vec<u8>> {
         self.0
-            .get(crate::tables::PlainState.erased(), who.encode().to_vec())
+            .get(tables::PlainState.erased(), who.encode().to_vec())
             .map(|res| res.unwrap_or_default())
     }
 
@@ -164,7 +159,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
         key: H256,
     ) -> Result<H256> {
         let bucket = crate::storage::StorageBucket::new(who, incarnation);
-        let mut cur = self.0.cursor(crate::tables::Storage)?;
+        let mut cur = self.0.cursor(tables::Storage)?;
 
         if let Some((k, v)) = cur.seek_both_range(bucket, key)? {
             if k == key {
@@ -178,7 +173,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     /// Returns the incarnation of the account when it was last deleted
     pub fn read_last_incarnation(&mut self, who: Address) -> Result<u64> {
         self.0
-            .get(crate::tables::IncarnationMap, who)
+            .get(tables::IncarnationMap, who)
             .map(|res| res.unwrap_or_default())
     }
 
@@ -188,7 +183,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
             return Ok(bytes::Bytes::new());
         }
         self.0
-            .get(tables::Code, codehash)
+            .get(ak_tables::Code, codehash)
             .map(|res| res.unwrap_or_default())
     }
 
@@ -199,7 +194,10 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     }
 
     /// Returns the (block number, block hash) key used to identify a block in the db
-    pub fn get_header_key<T: Into<BlockId> + Send + Sync>(&mut self, id: T) -> Result<HeaderKey> {
+    pub fn get_header_key<T: Into<BlockId> + Send + Sync>(
+        &mut self,
+        id: T,
+    ) -> Result<ak_tables::HeaderKey> {
         let (num, hash) = match id.into() {
             BlockId::Hash(hash) => {
                 let num = self.read_header_number(hash)?.0.into();
@@ -222,7 +220,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     /// Helper fn to walk a db table and print key, value pairs
     pub fn walk_table_debug<T: akula::kv::Table>(
         &mut self,
-        table: akula::kv::tables::ErasedTable<T>,
+        table: ak_tables::ErasedTable<T>,
     ) -> Result<()> {
         println!("\nWalking table: {:?}", table.0);
         let mut cur = self.0.cursor(table).unwrap();

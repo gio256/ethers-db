@@ -1,3 +1,4 @@
+use akula::kv::traits as ak_traits;
 use anyhow::format_err;
 use bytes::Buf;
 use ethers::types::{H256, U256};
@@ -12,7 +13,7 @@ pub struct Account {
     pub codehash: H256, // hash of the bytecode
 }
 
-impl akula::kv::traits::TableDecode for Account {
+impl ak_traits::TableDecode for Account {
     fn decode(mut enc: &[u8]) -> anyhow::Result<Self> {
         let mut acct = Self::default();
 
@@ -62,7 +63,7 @@ impl akula::kv::traits::TableDecode for Account {
     }
 }
 //TODO: dummy impl as we only need to decode for now, but need the trait bound
-impl akula::kv::traits::TableEncode for Account {
+impl ak_traits::TableEncode for Account {
     type Encoded = Vec<u8>;
     fn encode(self) -> Self::Encoded {
         Self::Encoded::default()
