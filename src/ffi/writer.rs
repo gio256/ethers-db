@@ -158,7 +158,13 @@ impl Writer {
             bufs.push(GoU256::from(hash));
         }
 
-        let exit = unsafe { PutTxLookupEntries(self.db_ptr, (&mut num[..]).into(), GoSlice::from(&mut bufs[..]) )};
+        let exit = unsafe {
+            PutTxLookupEntries(
+                self.db_ptr,
+                (&mut num[..]).into(),
+                GoSlice::from(&mut bufs[..]),
+            )
+        };
         exit.ok_or_fmt("PutTxLookupEntries")?;
         Ok(())
     }

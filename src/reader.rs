@@ -235,16 +235,20 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        account::Account,
-        ffi::writer::Writer,
-        rand::Rand,
-        tests::{get_db, TMP_DIR},
-    };
     use akula::models::{self as ak_models, BodyForStorage, MessageWithSignature, H256};
     use anyhow::Result;
     use ethers::{core::types::Address, utils::keccak256};
     use rand::thread_rng;
+    use std::path::PathBuf;
+
+    use crate::{
+        account::Account, client::Client, ffi::writer::Writer, rand::Rand, tests::TMP_DIR,
+    };
+
+    // helper for type inference
+    pub fn client(path: PathBuf) -> Result<Client<mdbx::NoWriteMap>> {
+        Client::open_new(path)
+    }
 
     #[test]
     fn test_read_head_header_hash() -> Result<()> {
@@ -254,7 +258,7 @@ mod tests {
         w.put_head_header_hash(hash)?;
         let path = w.close()?;
 
-        let db = get_db(path)?;
+        let db = client(path)?;
         let read = db.reader()?.read_head_header_hash()?;
         assert_eq!(read, hash);
         Ok(())
@@ -269,7 +273,7 @@ mod tests {
         w.put_header_number(hash, num)?;
         let path = w.close()?;
 
-        let db = get_db(path)?;
+        let db = client(path)?;
         let read = db.reader()?.read_header_number(hash)?;
         assert_eq!(read.0, num);
         Ok(())
@@ -285,7 +289,7 @@ mod tests {
         w.put_canonical_hash(hash, num)?;
         let path = w.close()?;
 
-        let db = get_db(path)?;
+        let db = client(path)?;
         let read = db.reader()?.is_canonical_hash(hash)?;
         assert!(read);
         Ok(())
@@ -305,7 +309,7 @@ mod tests {
         w.put_account(who, acct)?;
         let path = w.close()?;
 
-        let db = get_db(path)?;
+        let db = client(path)?;
         let mut dbtx = db.reader().unwrap();
         let read = dbtx.read_account_data(who).unwrap();
         assert_eq!(acct, read);
@@ -326,7 +330,7 @@ mod tests {
         w.put_transactions(txs.clone(), base_id)?;
         let path = w.close()?;
 
-        let db = get_db(path)?;
+        let db = client(path)?;
         let mut dbtx = db.reader().unwrap();
         let read = dbtx.read_transactions(base_id, n).unwrap();
 
@@ -347,7 +351,7 @@ mod tests {
         w.put_body_for_storage(hash, num, body.clone())?;
         let path = w.close()?;
 
-        let db = get_db(path)?;
+        let db = client(path)?;
         let mut dbtx = db.reader().unwrap();
         let key = (num.into(), hash);
         let read = dbtx.read_body_for_storage(key).unwrap();
@@ -368,13 +372,12 @@ mod tests {
         w.put_tx_lookup_entries(block_num, tx_hashes.clone())?;
         let path = w.close()?;
 
-        let db = get_db(path)?;
+        let db = client(path)?;
         let mut dbtx = db.reader().unwrap();
         for hash in tx_hashes {
             let read = dbtx.read_transaction_block_number(hash).unwrap();
             assert_eq!(read, block_num);
         }
         Ok(())
-
     }
 }

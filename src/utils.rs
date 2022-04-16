@@ -10,7 +10,7 @@ pub fn open_db<E: mdbx::EnvironmentKind>(chaindata_dir: PathBuf) -> Result<MdbxE
     MdbxEnvironment::<E>::open_ro(
         mdbx::Environment::new(),
         &chaindata_dir,
-        // opening read-only, so the size of the DatabaseChat determines max_dbs,
+        // opening read-only, so the size of the DatabaseChart determines max_dbs,
         // but the contents are discarded
         akula::kv::tables::CHAINDATA_TABLES.clone(),
     )
