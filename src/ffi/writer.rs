@@ -1,5 +1,5 @@
 use crate::account::Account;
-use akula::models::{self as ak_models, BodyForStorage, RlpAccount, BlockNumber};
+use akula::models::{self as ak_models, BlockHeader, BlockNumber, BodyForStorage, RlpAccount};
 use anyhow::Result;
 use bytes::BytesMut;
 use ethers::types::{Address, Transaction, H256};
@@ -70,6 +70,15 @@ impl Writer {
                 acct.incarnation,
             )
         };
+        exit.ok_or_fmt("PutAccount")?;
+        Ok(())
+    }
+
+    pub fn put_header(&mut self, mut header: BlockHeader) -> Result<()> {
+        let mut buf = vec![];
+        header.encode(&mut buf);
+
+        let exit = unsafe { PutHeader(self.db_ptr, GoRlp((&mut buf[..]).into())) };
         exit.ok_or_fmt("PutAccount")?;
         Ok(())
     }

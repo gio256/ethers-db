@@ -1,6 +1,6 @@
 use akula::{
     kv::mdbx::MdbxEnvironment,
-    models::{BlockHeader, Message, MessageWithSignature},
+    models::{Address, BlockHeader, Message, MessageWithSignature},
 };
 use anyhow::Result;
 use ethers::types::H256;
@@ -26,41 +26,62 @@ pub fn bytes_to_u64(buf: &[u8]) -> u64 {
 }
 
 /// Converts akula block and message data into ethers transaction data
-pub struct MsgCast<'a>(pub &'a MessageWithSignature);
+pub struct MsgCast<'a> {
+    pub msg: &'a MessageWithSignature,
+    pub src: Option<Address>,
+}
 impl<'a> MsgCast<'a> {
+    pub fn new(msg: &'a MessageWithSignature) -> Self {
+        Self { msg, src: None }
+    }
+
+    pub fn new_with_src(msg: &'a MessageWithSignature, src: Address) -> Self {
+        Self {
+            msg,
+            src: Some(src),
+        }
+    }
+
     pub fn cast(
         &self,
         block_num: akula::models::BlockNumber,
         block_hash: H256,
         idx: usize,
     ) -> ethers::types::Transaction {
+        let from = if let Some(src) = self.src {
+            src
+        } else {
+            self.msg.recover_sender().expect("bad sig")
+        };
         ethers::types::Transaction {
-            hash: self.0.hash(),
-            nonce: self.0.nonce().into(),
+            hash: self.msg.hash(),
+            nonce: self.msg.nonce().into(),
             block_hash: Some(block_hash),
-            block_number: Some(block_num.0.into()),
+            block_number: Some((*block_num).into()),
             transaction_index: Some(idx.into()),
-            from: self.0.recover_sender().expect("bad sig"), //TODO: erigon has a separate table they merge instead
-            to: self.0.action().into_address(),
-            value: self.0.value().to_be_bytes().into(),
+            from,
+            to: self.msg.action().into_address(),
+            value: self.msg.value().to_be_bytes().into(),
             gas_price: self.gas_price(),
-            gas: self.0.gas_limit().into(),
-            input: self.0.input().clone().into(),
-            v: self.0.v().into(),
-            r: self.0.r().to_fixed_bytes().into(),
-            s: self.0.s().to_fixed_bytes().into(),
+            gas: self.msg.gas_limit().into(),
+            input: self.msg.input().clone().into(),
+            v: self.msg.v().into(),
+            r: self.msg.r().to_fixed_bytes().into(),
+            s: self.msg.s().to_fixed_bytes().into(),
             transaction_type: self.tx_type(),
             access_list: self.access_list(),
-            chain_id: self.0.chain_id().map(|id| id.0.into()),
+            chain_id: self.msg.chain_id().map(|id| (*id).into()),
 
             //TODO: should these be None for legacy txs?
-            max_priority_fee_per_gas: Some(self.0.max_priority_fee_per_gas().to_be_bytes().into()),
-            max_fee_per_gas: Some(self.0.max_fee_per_gas().to_be_bytes().into()),
+            max_priority_fee_per_gas: Some(
+                self.msg.max_priority_fee_per_gas().to_be_bytes().into(),
+            ),
+            max_fee_per_gas: Some(self.msg.max_fee_per_gas().to_be_bytes().into()),
         }
     }
 
     pub fn gas_price(&self) -> Option<ethers::types::U256> {
-        match self.0.message {
+        match self.msg.message {
             Message::Legacy { gas_price, .. } | Message::EIP2930 { gas_price, .. } => {
                 Some(gas_price.to_be_bytes().into())
             }
@@ -69,7 +90,7 @@ impl<'a> MsgCast<'a> {
     }
 
     fn tx_type(&self) -> Option<ethers::types::U64> {
-        match self.0.message {
+        match self.msg.message {
             Message::EIP2930 { .. } => Some(1.into()),
             Message::EIP1559 { .. } => Some(2.into()),
             _ => None,
@@ -77,7 +98,7 @@ impl<'a> MsgCast<'a> {
     }
 
     fn access_list(&self) -> Option<ethers::types::transaction::eip2930::AccessList> {
-        match &self.0.message {
+        match &self.msg.message {
             Message::EIP2930 { access_list, .. } | Message::EIP1559 { access_list, .. } => Some(
                 access_list
                     .iter()

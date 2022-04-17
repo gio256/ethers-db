@@ -124,6 +124,13 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
             .take(n.try_into()?))
     }
 
+    /// Returns the signers of each transaction in the block.
+    pub fn read_senders(&mut self, key: ak_tables::HeaderKey) -> Result<Vec<Address>> {
+        self.0
+            .get(ak_tables::TxSender, key)
+            .map(|res| res.unwrap_or_default())
+    }
+
     /// Returns the hash assigned to a canonical block number.
     pub fn read_canonical_hash(&mut self, num: ak_models::BlockNumber) -> Result<H256> {
         self.0
@@ -193,30 +200,6 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
         Ok(code.len())
     }
 
-    /// Returns the (block number, block hash) key used to identify a block in the db
-    pub fn get_header_key<T: Into<BlockId> + Send + Sync>(
-        &mut self,
-        id: T,
-    ) -> Result<ak_tables::HeaderKey> {
-        let (num, hash) = match id.into() {
-            BlockId::Hash(hash) => {
-                let num = self.read_header_number(hash)?.0.into();
-                (num, hash)
-            }
-            BlockId::Number(id) => match id {
-                EthersBlockNumber::Number(n) => (n, self.read_canonical_hash(n.as_u64().into())?),
-                //TODO: check this https://github.com/ledgerwatch/erigon/blob/156da607e7495d709c141aec40f66a2556d35dc0/cmd/rpcdaemon/commands/rpc_block.go#L30
-                EthersBlockNumber::Latest | EthersBlockNumber::Pending => {
-                    let hash = self.read_head_header_hash()?;
-                    let num = self.read_header_number(hash)?;
-                    (num.0.into(), hash)
-                }
-                EthersBlockNumber::Earliest => (0.into(), self.read_canonical_hash(0.into())?),
-            },
-        };
-        Ok((num.as_u64().into(), hash))
-    }
-
     /// Helper fn to walk a db table and print key, value pairs
     pub fn walk_table_debug<T: akula::kv::Table>(
         &mut self,
@@ -261,6 +244,22 @@ mod tests {
         let db = client(path)?;
         let read = db.reader()?.read_head_header_hash()?;
         assert_eq!(read, hash);
+        Ok(())
+    }
+
+    #[test]
+    fn test_read_header() -> Result<()> {
+        let mut rng = thread_rng();
+        let header = ak_models::BlockHeader::rand(&mut rng);
+        let key = (header.number, header.hash());
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        w.put_header(header.clone())?;
+        let path = w.close()?;
+
+        let db = client(path)?;
+        let read = db.reader()?.read_header(key)?;
+        assert_eq!(read, header);
         Ok(())
     }
 

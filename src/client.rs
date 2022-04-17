@@ -1,7 +1,9 @@
-use akula::kv::mdbx::MdbxEnvironment;
+use akula::kv::{mdbx::MdbxEnvironment, tables as ak_tables};
 use anyhow::{format_err, Result};
-use ethers::core::types::{Address, Block, BlockId, TxHash, H256, U256, U64};
-use mdbx::EnvironmentKind;
+use ethers::core::types::{
+    Address, Block, BlockId, BlockNumber as EthersBlockNumber, TxHash, H256, U256, U64,
+};
+use mdbx::{EnvironmentKind, TransactionKind};
 use std::path::PathBuf;
 
 use crate::reader::Reader;
@@ -55,14 +57,13 @@ impl<E: EnvironmentKind> Client<E> {
         let block_hash = dbtx.read_canonical_hash(block_num)?;
         let body = dbtx.read_body_for_storage((block_num, block_hash))?;
 
-        //TODO read sender from db
         let (msg, idx) = dbtx
             .read_transactions(body.base_tx_id.0, body.tx_amount)?
             .zip(0..)
             .find(|(msg, _i)| msg.hash() == hash)
             .unwrap();
 
-        Ok(Some(MsgCast(&msg).cast(block_num, block_hash, idx)))
+        Ok(Some(MsgCast::new(&msg).cast(block_num, block_hash, idx)))
     }
 
     pub fn get_storage_at(
@@ -83,7 +84,7 @@ impl<E: EnvironmentKind> Client<E> {
         block_hash_or_number: T,
     ) -> Result<U256> {
         let mut dbtx = self.reader()?;
-        let header_key = dbtx.get_header_key(block_hash_or_number)?;
+        let header_key = get_header_key(&mut dbtx, block_hash_or_number)?;
         let body = dbtx.read_body_for_storage(header_key)?;
         Ok(body.uncles.len().into())
     }
@@ -94,7 +95,7 @@ impl<E: EnvironmentKind> Client<E> {
         idx: U64,
     ) -> Result<Option<Block<H256>>> {
         let mut dbtx = self.reader()?;
-        let header_key = dbtx.get_header_key(block_hash_or_number)?;
+        let header_key = get_header_key(&mut dbtx, block_hash_or_number)?;
         let body = dbtx.read_body_for_storage(header_key)?;
         let idx = idx.as_usize();
         if idx < body.uncles.len() {
@@ -104,6 +105,7 @@ impl<E: EnvironmentKind> Client<E> {
         }
     }
 
+    //TODO: should also look for non-canonical blocks?
     // https://github.com/akula-bft/akula/blob/a9aed09b31bb41c89832149bcad7248f7fcd70ca/bin/akula.rs#L266
     pub fn get_block<T: Into<BlockId> + Send + Sync>(
         &self,
@@ -111,7 +113,7 @@ impl<E: EnvironmentKind> Client<E> {
     ) -> Result<Option<Block<TxHash>>> {
         let mut dbtx = self.reader()?;
 
-        let header_key = dbtx.get_header_key(block_hash_or_number)?;
+        let header_key = get_header_key(&mut dbtx, block_hash_or_number)?;
         let (block_num, block_hash) = header_key;
 
         let header = dbtx.read_header(header_key)?;
@@ -132,9 +134,8 @@ impl<E: EnvironmentKind> Client<E> {
             .uncles
             .iter()
             .map(|header| {
-                let (_, hash) = dbtx
-                    .get_header_key(header.number.0)
-                    .expect("no match for ommer");
+                let (_, hash) =
+                    get_header_key(&mut dbtx, header.number.0).expect("no match for ommer");
                 hash
             })
             .collect();
@@ -149,7 +150,7 @@ impl<E: EnvironmentKind> Client<E> {
     ) -> Result<Option<Block<ethers::types::Transaction>>> {
         let mut dbtx = self.reader()?;
 
-        let header_key = dbtx.get_header_key(block_hash_or_number)?;
+        let header_key = get_header_key(&mut dbtx, block_hash_or_number)?;
         let (block_num, block_hash) = header_key;
 
         let header = dbtx.read_header(header_key)?;
@@ -158,7 +159,7 @@ impl<E: EnvironmentKind> Client<E> {
         let txs = dbtx
             .read_transactions(body.base_tx_id.0, body.tx_amount)?
             .scan(0_usize, |idx, msg| {
-                let tx = MsgCast(&msg).cast(block_num, block_hash, *idx);
+                let tx = MsgCast::new(&msg).cast(block_num, block_hash, *idx);
                 *idx += 1;
                 Some(tx)
             })
@@ -174,9 +175,8 @@ impl<E: EnvironmentKind> Client<E> {
             .uncles
             .iter()
             .map(|header| {
-                let (_, hash) = dbtx
-                    .get_header_key(header.number.0)
-                    .expect("no match for ommer");
+                let (_, hash) =
+                    get_header_key(&mut dbtx, header.number.0).expect("no match for ommer");
                 hash
             })
             .collect();
@@ -186,15 +186,41 @@ impl<E: EnvironmentKind> Client<E> {
     }
 }
 
+/// Returns the (block number, block hash) key used to identify a block in the db
+pub fn get_header_key<T: Into<BlockId> + Send + Sync, TX: TransactionKind, E: EnvironmentKind>(
+    dbtx: &mut Reader<'_, TX, E>,
+    id: T,
+) -> Result<ak_tables::HeaderKey> {
+    let (num, hash) = match id.into() {
+        BlockId::Hash(hash) => {
+            let num = dbtx.read_header_number(hash)?.0.into();
+            (num, hash)
+        }
+        BlockId::Number(id) => match id {
+            EthersBlockNumber::Number(n) => (n, dbtx.read_canonical_hash(n.as_u64().into())?),
+            //TODO: check this https://github.com/ledgerwatch/erigon/blob/156da607e7495d709c141aec40f66a2556d35dc0/cmd/rpcdaemon/commands/rpc_block.go#L30
+            EthersBlockNumber::Latest | EthersBlockNumber::Pending => {
+                let hash = dbtx.read_head_header_hash()?;
+                let num = dbtx.read_header_number(hash)?;
+                (num.0.into(), hash)
+            }
+            EthersBlockNumber::Earliest => (0.into(), dbtx.read_canonical_hash(0.into())?),
+        },
+    };
+    Ok((num.as_u64().into(), hash))
+}
+
 #[cfg(test)]
 mod tests {
+    use akula::models::{BodyForStorage, MessageWithSignature, H256};
     use anyhow::Result;
     use ethers::{core::types::Address, utils::keccak256};
     use std::path::PathBuf;
-    use akula::models::{BodyForStorage, MessageWithSignature, H256};
 
     use super::Client;
-    use crate::{account::Account, ffi::writer::Writer, tests::TMP_DIR, rand::Rand, utils::MsgCast};
+    use crate::{
+        account::Account, ffi::writer::Writer, rand::Rand, tests::TMP_DIR, utils::MsgCast,
+    };
     use rand::thread_rng;
 
     // helper for type inference
@@ -273,10 +299,12 @@ mod tests {
     #[test]
     fn test_get_transaction() -> Result<()> {
         let mut rng = thread_rng();
-        let txs = (0..).map(|_| MessageWithSignature::rand(&mut rng)).take(5).collect::<Vec<_>>();
+        let txs = (0..)
+            .map(|_| MessageWithSignature::rand(&mut rng))
+            .take(5)
+            .collect::<Vec<_>>();
         let tx_hashes = txs.iter().map(|tx| tx.hash());
         let block_num = Rand::rand(&mut rng);
-        // let tx_hash = tx.hash();
 
         let block_body = BodyForStorage::rand(&mut rng);
         let base_tx_id = block_body.base_tx_id;
@@ -289,16 +317,26 @@ mod tests {
         w.put_canonical_hash(block_hash, block_num)?;
         // (block number, block hash) -> body_for_storage
         w.put_body_for_storage(block_hash, block_num, block_body)?;
-        // store transaction itself
+        // store transactions themselves
         w.put_transactions(txs.clone(), *base_tx_id)?;
         let path = w.close()?;
 
         let db = client(path)?;
         for (i, hash) in tx_hashes.enumerate() {
             let res = db.get_transaction(hash)?;
-            let expected = Some(MsgCast(&txs[i]).cast(block_num, block_hash, i));
+            let expected = Some(MsgCast::new(&txs[i]).cast(block_num, block_hash, i));
             assert_eq!(res, expected);
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_get_header_key() -> Result<()> {
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_block() -> Result<()> {
+        anyhow::bail!("not implemented")
     }
 }

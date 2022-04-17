@@ -7,17 +7,17 @@ import "C"
 import "runtime/cgo"
 import (
 	"context"
-    // llog "log"
+	// llog "log"
 
 	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"github.com/ledgerwatch/erigon-lib/kv/mdbx"
 	"github.com/ledgerwatch/erigon/common"
-	"github.com/ledgerwatch/erigon/rlp"
 	"github.com/ledgerwatch/erigon/core/rawdb"
 	"github.com/ledgerwatch/erigon/core/state"
 	"github.com/ledgerwatch/erigon/core/types"
 	"github.com/ledgerwatch/erigon/core/types/accounts"
+	"github.com/ledgerwatch/erigon/rlp"
 	"github.com/ledgerwatch/log/v3"
 )
 
@@ -89,8 +89,8 @@ func PutRawTransactions(dbPtr C.uintptr_t, txs [][]byte, baseTxId uint64) (exit 
 	}
 	defer closer(&err)
 
-    // skip 1 system tx at beginning of write
-	err = rawdb.WriteRawTransactions(dbtx, txs, baseTxId + 1)
+	// skip 1 system tx at beginning of write
+	err = rawdb.WriteRawTransactions(dbtx, txs, baseTxId+1)
 	if err != nil {
 		log.Error("WriteRawTransactions", err)
 		return -1
@@ -116,8 +116,8 @@ func PutTransactions(dbPtr C.uintptr_t, rlpTxs [][]byte, baseTxId uint64) (exit 
 	}
 	defer closer(&err)
 
-    // skip 1 system tx at beginning of write
-	err = rawdb.WriteTransactions(dbtx, txs, baseTxId + 1)
+	// skip 1 system tx at beginning of write
+	err = rawdb.WriteTransactions(dbtx, txs, baseTxId+1)
 	if err != nil {
 		log.Error("WriteTransactions", err)
 		return -1
@@ -131,11 +131,11 @@ func PutBodyForStorage(dbPtr C.uintptr_t, hash []byte, num uint64, bodyRlp []byt
 	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
 
 	h := common.BytesToHash(hash)
-    body := new(types.BodyForStorage)
-    if err := rlp.DecodeBytes(bodyRlp, body); err != nil {
-        log.Error("BodyForStorage DecodeBytes", err)
-        return -1
-    }
+	body := new(types.BodyForStorage)
+	if err := rlp.DecodeBytes(bodyRlp, body); err != nil {
+		log.Error("BodyForStorage DecodeBytes", err)
+		return -1
+	}
 
 	dbtx, closer, err := begin(db)
 	if err != nil {
@@ -165,11 +165,11 @@ func PutTxLookupEntries(dbPtr C.uintptr_t, blockNum []byte, txHashes [][]byte) (
 	}
 	defer closer(&err)
 
-    for _, hash := range txHashes {
-        if err = dbtx.Put(kv.TxLookup, hash, blockNum); err != nil {
-            log.Error("failed to store TxLookup entry", "err", err)
-        }
-    }
+	for _, hash := range txHashes {
+		if err = dbtx.Put(kv.TxLookup, hash, blockNum); err != nil {
+			log.Error("failed to store TxLookup entry", "err", err)
+		}
+	}
 
 	return 1
 }
@@ -253,6 +253,29 @@ func PutHeaderNumber(dbPtr C.uintptr_t, hash []byte, num uint64) (exit int) {
 		log.Error("WriteHeaderNumber", err)
 		return -1
 	}
+
+	return 1
+}
+
+//export PutHeader
+func PutHeader(dbPtr C.uintptr_t, headerRlp []byte) (exit int) {
+	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
+
+	header := new(types.Header)
+	if err := rlp.DecodeBytes(headerRlp, header); err != nil {
+		log.Error("Header DecodeBytes", err)
+		return -1
+	}
+
+	tx, closer, err := begin(db)
+	if err != nil {
+		log.Error("tx begin", err)
+		return -1
+	}
+	defer closer(&err)
+
+	// WriteHeader just log.Crits any errors
+	rawdb.WriteHeader(tx, header)
 
 	return 1
 }

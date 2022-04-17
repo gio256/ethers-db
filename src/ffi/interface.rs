@@ -17,6 +17,7 @@ extern "C" {
     pub(crate) fn PutRawTransactions(db: GoPtr, txs: GoSlice, baseId: u64) -> GoExit;
     // txs: [][]byte
     pub(crate) fn PutTransactions(db: GoPtr, txs: GoSlice, baseId: u64) -> GoExit;
+    pub(crate) fn PutHeader(db: GoPtr, header: GoRlp) -> GoExit;
     pub(crate) fn PutBodyForStorage(db: GoPtr, hash: GoU256, num: u64, body: GoRlp) -> GoExit;
     // tx_hashes: [][]byte
     pub(crate) fn PutTxLookupEntries(db: GoPtr, block_num: GoSlice, tx_hashes: GoSlice) -> GoExit;
