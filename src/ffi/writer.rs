@@ -74,7 +74,7 @@ impl Writer {
         Ok(())
     }
 
-    pub fn put_header(&mut self, mut header: BlockHeader) -> Result<()> {
+    pub fn put_header(&mut self, header: BlockHeader) -> Result<()> {
         let mut buf = vec![];
         header.encode(&mut buf);
 

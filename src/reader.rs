@@ -102,25 +102,45 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
         Ok(u64::try_from(num)?.into())
     }
 
-    /// Returns an iterator over the `n` transactions beginning at `start_key`.
+    /// Returns a vector of `n` transactions beginning at `start_key`, propgating
+    /// any error encountered in reading the requested transactions.
     pub fn read_transactions(
         &mut self,
         start_key: u64,
-        n: u64,
-    ) -> Result<impl Iterator<Item = ak_models::MessageWithSignature>> {
+        n: usize,
+    ) -> Result<Vec<ak_models::MessageWithSignature>> {
+        self.stream_transactions(start_key)?.take(n).collect()
+    }
+
+    /// Returns an iterator over transaction reads beginning at `start_key`
+    pub fn stream_transactions(
+        &mut self,
+        start_key: u64,
+    ) -> Result<impl Iterator<Item = Result<ak_models::MessageWithSignature>>> {
         // BlockTransaction is Erigon's "EthTx" table
         Ok(self
             .0
             .cursor(ak_tables::BlockTransaction.erased())?
             .walk(Some(start_key.encode().to_vec()))
-            .flat_map(|res| {
+            .map(|res| {
                 res.and_then(|(_, tx)| {
-                    //TODO: decoding issues?
-                    Ok(<ak_models::MessageWithSignature as Decodable>::decode(
-                        &mut &*tx,
-                    )?)
+                    <ak_models::MessageWithSignature as Decodable>::decode(&mut &*tx)
+                        .map_err(From::from)
                 })
-            })
+            }))
+    }
+
+    /// Returns an iterator over transactions beginning at `start_key`. Any errors
+    /// in reading or decoding transactions will be discarded. The caller must check
+    /// the length of the resulting collection if errant reads need to be handled.
+    pub fn try_stream_transactions(
+        &mut self,
+        start_key: u64,
+        n: usize,
+    ) -> Result<impl Iterator<Item = ak_models::MessageWithSignature>> {
+        Ok(self
+            .stream_transactions(start_key)?
+            .flatten()
             .take(n.try_into()?))
     }
 
@@ -335,7 +355,7 @@ mod tests {
         let mut dbtx = db.reader().unwrap();
         let read = dbtx.read_transactions(base_id, n).unwrap();
 
-        for (i, t) in read.enumerate() {
+        for (i, t) in read.into_iter().enumerate() {
             assert_eq!(t, txs[i]);
         }
         Ok(())

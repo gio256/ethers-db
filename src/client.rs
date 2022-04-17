@@ -58,10 +58,10 @@ impl<E: EnvironmentKind> Client<E> {
         let body = dbtx.read_body_for_storage((block_num, block_hash))?;
 
         let (msg, idx) = dbtx
-            .read_transactions(body.base_tx_id.0, body.tx_amount)?
+            .try_stream_transactions(*body.base_tx_id, body.tx_amount.try_into()?)?
             .zip(0..)
             .find(|(msg, _i)| msg.hash() == hash)
-            .unwrap();
+            .ok_or_else(|| format_err!("No transaction hash {} in block {}", hash, block_num))?;
 
         Ok(Some(MsgCast::new(&msg).cast(block_num, block_hash, idx)))
     }
@@ -120,15 +120,10 @@ impl<E: EnvironmentKind> Client<E> {
         let body = dbtx.read_body_for_storage(header_key)?;
 
         let txs = dbtx
-            .read_transactions(body.base_tx_id.0, body.tx_amount)?
-            .map(|msg| msg.hash())
-            .collect::<Vec<_>>();
-
-        if txs.len() as u64 != body.tx_amount {
-            return Err(
-                format_err!("Unexpected number of transactions in block {}.", block_num).into(),
-            );
-        }
+            .stream_transactions(body.base_tx_id.0)?
+            .map(|msg| Ok(msg?.hash()))
+            .take(body.tx_amount.try_into()?)
+            .collect::<Result<Vec<_>>>()?;
 
         let ommer_hashes = body
             .uncles
@@ -156,8 +151,10 @@ impl<E: EnvironmentKind> Client<E> {
         let header = dbtx.read_header(header_key)?;
         let body = dbtx.read_body_for_storage(header_key)?;
 
+        // try_stream_transactions so we can cast the txs as we read them
+        let tx_amt = body.tx_amount.try_into()?;
         let txs = dbtx
-            .read_transactions(body.base_tx_id.0, body.tx_amount)?
+            .try_stream_transactions(body.base_tx_id.0, tx_amt)?
             .scan(0_usize, |idx, msg| {
                 let tx = MsgCast::new(&msg).cast(block_num, block_hash, *idx);
                 *idx += 1;
@@ -165,10 +162,15 @@ impl<E: EnvironmentKind> Client<E> {
             })
             .collect::<Vec<_>>();
 
-        if txs.len() as u64 != body.tx_amount {
-            return Err(
-                format_err!("Unexpected number of transactions in block {}.", block_num).into(),
-            );
+        // If we failed to read any txs, they were discarded, so make sure we got them all
+        if txs.len() != tx_amt {
+            return Err(format_err!(
+                "Failed to get some txs in block {}. Expected: {}. Got {}",
+                block_num,
+                tx_amt,
+                txs.len()
+            )
+            .into());
         }
 
         let ommer_hashes = body

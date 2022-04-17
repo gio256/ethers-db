@@ -40,7 +40,7 @@ mod tests {
 #[cfg(test)]
 mod rand {
     use akula::models::{
-        Address, BlockHeader, BodyForStorage, Message, MessageSignature, MessageWithSender,
+        Address, Block, BlockHeader, BodyForStorage, Message, MessageSignature, MessageWithSender,
         MessageWithSignature, TransactionAction, H256,
     };
     use ethers::core::k256::{
@@ -244,5 +244,19 @@ mod rand {
                 base_fee_per_gas: Rand::rand(rng),
             }
         }
+    }
+
+    impl Rand for Block {
+        fn rand(rng: &mut ThreadRng) -> Self {
+            Self {
+                header: Rand::rand(rng),
+                transactions: Default::default(),
+                ommers: Default::default(),
+            }
+        }
+    }
+
+    pub fn rand_vec<T: Rand>(rng: &mut ThreadRng, n: usize) -> Vec<T> {
+        (0..).map(|_| Rand::rand(rng)).take(n).collect()
     }
 }
