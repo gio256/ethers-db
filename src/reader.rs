@@ -266,8 +266,9 @@ mod tests {
 
     #[test]
     fn test_read_header_number() -> Result<()> {
+        let mut rng = thread_rng();
+        let num = Rand::rand(&mut rng);
         let hash = keccak256(vec![0x10]).into();
-        let num = 100;
 
         let mut w = Writer::open(TMP_DIR.clone())?;
         w.put_header_number(hash, num)?;
@@ -275,14 +276,15 @@ mod tests {
 
         let db = client(path)?;
         let read = db.reader()?.read_header_number(hash)?;
-        assert_eq!(read.0, num);
+        assert_eq!(read, num);
         Ok(())
     }
 
     #[test]
     fn test_is_canonical_hash() -> Result<()> {
+        let mut rng = thread_rng();
+        let num = Rand::rand(&mut rng);
         let hash = keccak256(vec![0x10]).into();
-        let num = 100;
 
         let mut w = Writer::open(TMP_DIR.clone())?;
         w.put_header_number(hash, num)?;
@@ -348,7 +350,7 @@ mod tests {
         let body = BodyForStorage::rand(&mut rng);
 
         let mut w = Writer::open(TMP_DIR.clone())?;
-        w.put_body_for_storage(hash, num, body.clone())?;
+        w.put_body_for_storage(hash, num.into(), body.clone())?;
         let path = w.close()?;
 
         let db = client(path)?;

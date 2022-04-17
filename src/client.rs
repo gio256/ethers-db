@@ -25,7 +25,7 @@ impl<E: EnvironmentKind> Client<E> {
     }
 }
 
-// Sync middleware methods
+// Synchronous middleware methods
 impl<E: EnvironmentKind> Client<E> {
     pub fn get_block_number(&self) -> Result<U64> {
         let mut dbtx = self.reader()?;
@@ -52,16 +52,17 @@ impl<E: EnvironmentKind> Client<E> {
 
         let mut dbtx = self.reader()?;
         let block_num = dbtx.read_transaction_block_number(hash)?;
-        let header_key = dbtx.get_header_key(block_num.0)?;
-        let body = dbtx.read_body_for_storage(header_key)?;
+        let block_hash = dbtx.read_canonical_hash(block_num)?;
+        let body = dbtx.read_body_for_storage((block_num, block_hash))?;
 
+        //TODO read sender from db
         let (msg, idx) = dbtx
             .read_transactions(body.base_tx_id.0, body.tx_amount)?
             .zip(0..)
             .find(|(msg, _i)| msg.hash() == hash)
             .unwrap();
 
-        Ok(Some(MsgCast(&msg).cast(block_num, header_key.1, idx)))
+        Ok(Some(MsgCast(&msg).cast(block_num, block_hash, idx)))
     }
 
     pub fn get_storage_at(
@@ -190,9 +191,11 @@ mod tests {
     use anyhow::Result;
     use ethers::{core::types::Address, utils::keccak256};
     use std::path::PathBuf;
+    use akula::models::{BodyForStorage, MessageWithSignature, H256};
 
     use super::Client;
-    use crate::{account::Account, ffi::writer::Writer, tests::TMP_DIR};
+    use crate::{account::Account, ffi::writer::Writer, tests::TMP_DIR, rand::Rand, utils::MsgCast};
+    use rand::thread_rng;
 
     // helper for type inference
     pub fn client(path: PathBuf) -> Result<Client<mdbx::NoWriteMap>> {
@@ -201,8 +204,9 @@ mod tests {
 
     #[test]
     fn test_get_balance() -> Result<()> {
-        let bal = 7.into();
-        let who: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2".parse()?;
+        let mut rng = thread_rng();
+        let who = Rand::rand(&mut rng);
+        let bal = <[u8; 32]>::rand(&mut rng).into();
         let acct = Account::new().balance(bal);
 
         let mut w = Writer::open(TMP_DIR.clone())?;
@@ -217,8 +221,9 @@ mod tests {
 
     #[test]
     fn test_get_transaction_count() -> Result<()> {
-        let nonce = 8;
-        let who: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2".parse()?;
+        let mut rng = thread_rng();
+        let who = Rand::rand(&mut rng);
+        let nonce = Rand::rand(&mut rng);
         let acct = Account::new().nonce(nonce);
 
         let mut w = Writer::open(TMP_DIR.clone())?;
@@ -233,9 +238,10 @@ mod tests {
 
     #[test]
     fn test_get_storage_at() -> Result<()> {
-        let who: Address = "0x0d4c6c6605a729a379216c93e919711a081beba2".parse()?;
-        let key = keccak256(vec![0xff]).into();
-        let val = keccak256(vec![0xff, 0xab, 0xcd]).into();
+        let mut rng = thread_rng();
+        let who = Rand::rand(&mut rng);
+        let key = Rand::rand(&mut rng);
+        let val = Rand::rand(&mut rng);
 
         let mut w = Writer::open(TMP_DIR.clone())?;
         w.put_storage(who, key, val)?;
@@ -249,8 +255,9 @@ mod tests {
 
     #[test]
     fn test_get_block_number() -> Result<()> {
+        let mut rng = thread_rng();
+        let num = Rand::rand(&mut rng);
         let hash = keccak256(vec![0x10]).into();
-        let num = 100;
 
         let mut w = Writer::open(TMP_DIR.clone())?;
         w.put_head_header_hash(hash)?;
@@ -259,7 +266,39 @@ mod tests {
 
         let db = client(path)?;
         let res = db.get_block_number()?;
-        assert_eq!(res, num.into());
+        assert_eq!(res, (*num).into());
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_transaction() -> Result<()> {
+        let mut rng = thread_rng();
+        let txs = (0..).map(|_| MessageWithSignature::rand(&mut rng)).take(5).collect::<Vec<_>>();
+        let tx_hashes = txs.iter().map(|tx| tx.hash());
+        let block_num = Rand::rand(&mut rng);
+        // let tx_hash = tx.hash();
+
+        let block_body = BodyForStorage::rand(&mut rng);
+        let base_tx_id = block_body.base_tx_id;
+        let block_hash = H256::rand(&mut rng);
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        // tx hash -> block number
+        w.put_tx_lookup_entries(block_num, tx_hashes.clone())?;
+        // block number -> block hash
+        w.put_canonical_hash(block_hash, block_num)?;
+        // (block number, block hash) -> body_for_storage
+        w.put_body_for_storage(block_hash, block_num, block_body)?;
+        // store transaction itself
+        w.put_transactions(txs.clone(), *base_tx_id)?;
+        let path = w.close()?;
+
+        let db = client(path)?;
+        for (i, hash) in tx_hashes.enumerate() {
+            let res = db.get_transaction(hash)?;
+            let expected = Some(MsgCast(&txs[i]).cast(block_num, block_hash, i));
+            assert_eq!(res, expected);
+        }
         Ok(())
     }
 }

@@ -89,7 +89,8 @@ func PutRawTransactions(dbPtr C.uintptr_t, txs [][]byte, baseTxId uint64) (exit 
 	}
 	defer closer(&err)
 
-	err = rawdb.WriteRawTransactions(dbtx, txs, baseTxId)
+    // skip 1 system tx at beginning of write
+	err = rawdb.WriteRawTransactions(dbtx, txs, baseTxId + 1)
 	if err != nil {
 		log.Error("WriteRawTransactions", err)
 		return -1
@@ -115,8 +116,8 @@ func PutTransactions(dbPtr C.uintptr_t, rlpTxs [][]byte, baseTxId uint64) (exit 
 	}
 	defer closer(&err)
 
-
-	err = rawdb.WriteTransactions(dbtx, txs, baseTxId)
+    // skip 1 system tx at beginning of write
+	err = rawdb.WriteTransactions(dbtx, txs, baseTxId + 1)
 	if err != nil {
 		log.Error("WriteTransactions", err)
 		return -1

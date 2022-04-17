@@ -1,5 +1,5 @@
 use crate::account::Account;
-use akula::models::{self as ak_models, BodyForStorage, RlpAccount};
+use akula::models::{self as ak_models, BodyForStorage, RlpAccount, BlockNumber};
 use anyhow::Result;
 use bytes::BytesMut;
 use ethers::types::{Address, Transaction, H256};
@@ -45,14 +45,14 @@ impl Writer {
         Ok(())
     }
 
-    pub fn put_header_number(&mut self, mut hash: H256, num: u64) -> Result<()> {
-        let exit = unsafe { PutHeaderNumber(self.db_ptr, (&mut hash).into(), num) };
+    pub fn put_header_number(&mut self, mut hash: H256, num: BlockNumber) -> Result<()> {
+        let exit = unsafe { PutHeaderNumber(self.db_ptr, (&mut hash).into(), *num) };
         exit.ok_or_fmt("PutHeaderNumber")?;
         Ok(())
     }
 
-    pub fn put_canonical_hash(&mut self, mut hash: H256, num: u64) -> Result<()> {
-        let exit = unsafe { PutCanonicalHash(self.db_ptr, (&mut hash).into(), num) };
+    pub fn put_canonical_hash(&mut self, mut hash: H256, num: BlockNumber) -> Result<()> {
+        let exit = unsafe { PutCanonicalHash(self.db_ptr, (&mut hash).into(), *num) };
         exit.ok_or_fmt("PutCanonicalHash")?;
         Ok(())
     }
@@ -127,7 +127,7 @@ impl Writer {
     pub fn put_body_for_storage(
         &mut self,
         mut hash: H256,
-        num: u64,
+        num: ak_models::BlockNumber,
         body: BodyForStorage,
     ) -> Result<()> {
         let mut buf = vec![];
@@ -137,7 +137,7 @@ impl Writer {
             PutBodyForStorage(
                 self.db_ptr,
                 GoU256::from(&mut hash),
-                num,
+                *num,
                 GoRlp((&mut buf[..]).into()),
             )
         };
