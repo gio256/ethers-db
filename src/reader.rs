@@ -26,22 +26,22 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     /// Returns the hash of the current canonical head header.
     pub fn read_head_header_hash(&mut self) -> Result<H256> {
         self.0
-            .get(tables::LastHeader, String::from("LastHeader").into_bytes())
-            .map(|res| res.unwrap_or_default())
+            .get(tables::LastHeader, String::from("LastHeader").into_bytes())?
+            .ok_or_else(|| format_err!("read_head_header_hash"))
     }
 
     /// Returns the hash of the current canonical head block.
     pub fn read_head_block_hash(&mut self) -> Result<H256> {
         self.0
-            .get(tables::LastBlock, String::from("LastBlock").into_bytes())
-            .map(|res| res.unwrap_or_default())
+            .get(tables::LastBlock, String::from("LastBlock").into_bytes())?
+            .ok_or_else(|| format_err!("read_head_block_hash"))
     }
 
     /// Returns the header number assigned to a hash
     pub fn read_header_number(&mut self, hash: H256) -> Result<ak_models::BlockNumber> {
         self.0
-            .get(ak_tables::HeaderNumber, hash)
-            .map(|res| res.unwrap_or_default())
+            .get(ak_tables::HeaderNumber, hash)?
+            .ok_or_else(|| format_err!("read_header_number"))
     }
 
     /// Returns the number of the current canonical block header
@@ -61,7 +61,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     pub fn read_header_rlp(&mut self, key: ak_tables::HeaderKey) -> Result<Vec<u8>> {
         self.0
             .get(ak_tables::Header.erased(), key.encode().to_vec())?
-            .ok_or_else(|| format_err!("cant find header"))
+            .ok_or_else(|| format_err!("read_header_rlp"))
     }
 
     /// Returns the decoding of the body as stored in the BlockBody table
@@ -115,7 +115,12 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
             .take(n)
             .collect::<Result<Vec<_>>>()?;
         if res.len() != n {
-            anyhow::bail!("Could not read {} transactions from start key {:x}. Got {}", n, start_key, res.len())
+            anyhow::bail!(
+                "Could not read {} transactions from start key {:x}. Got {}",
+                n,
+                start_key,
+                res.len()
+            )
         }
         Ok(res)
     }
@@ -156,16 +161,15 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     /// Returns the signers of each transaction in the block.
     pub fn read_senders(&mut self, key: ak_tables::HeaderKey) -> Result<Vec<Address>> {
         self.0
-            .get(ak_tables::TxSender, key)
-            .map(|res| res.unwrap_or_default())
+            .get(ak_tables::TxSender, key)?
+            .ok_or_else(|| format_err!("read_senders"))
     }
 
     /// Returns the hash assigned to a canonical block number.
     pub fn read_canonical_hash(&mut self, num: ak_models::BlockNumber) -> Result<H256> {
         self.0
-            .get(ak_tables::CanonicalHeader, num)
-            // .ok_or(format_err!("read_canonical_hash not found"))
-            .map(|res| res.unwrap_or_default())
+            .get(ak_tables::CanonicalHeader, num)?
+            .ok_or(format_err!("read_canonical_hash"))
     }
 
     /// Determines whether a header with the given hash is on the canonical chain.
@@ -176,6 +180,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     }
 
     /// Returns the decoded account data as stored in the PlainState table.
+    /// If the account is not in the db, the empty account is returned.
     pub fn read_account_data(&mut self, who: Address) -> Result<Account> {
         self.0
             .get(tables::PlainState, who)
@@ -184,11 +189,12 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
 
     pub fn read_account_data_raw(&mut self, who: Address) -> Result<Vec<u8>> {
         self.0
-            .get(tables::PlainState.erased(), who.encode().to_vec())
-            .map(|res| res.unwrap_or_default())
+            .get(tables::PlainState.erased(), who.encode().to_vec())?
+            .ok_or_else(|| format_err!("read_account_data_raw"))
     }
 
     /// Returns the value of the storage for account `who` indexed by `key`.
+    /// If the account or storage slot is not in the db, returns 0x0.
     pub fn read_account_storage(
         &mut self,
         who: Address,
@@ -207,7 +213,8 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
         Ok(Default::default())
     }
 
-    /// Returns the incarnation of the account when it was last deleted
+    /// Returns the incarnation of the account when it was last deleted.
+    /// If the account is not in the db, returns 0.
     pub fn read_last_incarnation(&mut self, who: Address) -> Result<u64> {
         self.0
             .get(tables::IncarnationMap, who)
@@ -215,22 +222,25 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     }
 
     /// Returns the code associated with the given codehash.
+    /// If the codehash is not in the db, returns an error.
     pub fn read_code(&mut self, codehash: H256) -> Result<bytes::Bytes> {
         if codehash == *EMPTY_CODEHASH {
             return Ok(bytes::Bytes::new());
         }
         self.0
-            .get(ak_tables::Code, codehash)
-            .map(|res| res.unwrap_or_default())
+            .get(ak_tables::Code, codehash)?
+            .ok_or_else(|| format_err!("read_account_data_raw"))
     }
 
-    /// Returns the code associated with the given codehash.
+    /// Returns the length of the code associated with the given codehash.
+    /// If the codehash is not in the db, returns an error.
     pub fn read_code_size(&mut self, codehash: H256) -> Result<usize> {
         let code = self.read_code(codehash)?;
         Ok(code.len())
     }
 
     /// Helper fn to walk a db table and print key, value pairs
+    #[cfg(test)]
     pub fn walk_table_debug<T: akula::kv::Table>(
         &mut self,
         table: ak_tables::ErasedTable<T>,
