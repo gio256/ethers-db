@@ -1,4 +1,7 @@
-use akula::kv::{mdbx::MdbxEnvironment, tables as ak_tables};
+use akula::{
+    kv::{mdbx::MdbxEnvironment, tables as ak_tables},
+    models as ak_models,
+};
 use anyhow::{format_err, Result};
 use ethers::core::types::{
     Address, Block, BlockId, BlockNumber as EthersBlockNumber, TxHash, H256, U256, U64,
@@ -8,6 +11,12 @@ use std::path::PathBuf;
 
 use crate::reader::Reader;
 use crate::utils::{open_db, BlockCast, MsgCast};
+
+// TODO:
+// - receipts
+// - historical data
+// - logs
+// - delegate to inner when data may not be in the db but erigon would reconstruct it
 
 #[derive(Debug)]
 pub struct Client<E: EnvironmentKind>(MdbxEnvironment<E>);
@@ -38,6 +47,13 @@ impl<E: EnvironmentKind> Client<E> {
         assert!(block.is_none(), "no history handling yet");
         let mut dbtx = self.reader()?;
         Ok(dbtx.read_account_data(from)?.balance)
+    }
+
+    pub fn get_code(&self, from: Address, block: Option<BlockId>) -> Result<ethers::types::Bytes> {
+        assert!(block.is_none(), "no history handling yet");
+        let mut dbtx = self.reader()?;
+        let data = dbtx.read_account_data(from)?;
+        dbtx.read_code(data.codehash).map(From::from)
     }
 
     pub fn get_transaction_count(&self, from: Address, block: Option<BlockId>) -> Result<U256> {
@@ -194,6 +210,25 @@ impl<E: EnvironmentKind> Client<E> {
         let block = crate::utils::BlockCast(&header).cast(txs, block_num, block_hash, ommer_hashes);
         Ok(Some(block))
     }
+
+    // Either gets the receipts from the db (if they're cached) or returns the
+    // resolved block number
+    pub fn get_block_receipts<T: Into<EthersBlockNumber> + Send + Sync>(
+        &self,
+        block: T,
+    ) -> Result<Either<ak_models::BlockNumber, Vec<ethers::types::TransactionReceipt>>> {
+        let mut dbtx = self.reader()?;
+        let num = res_block_number(&mut dbtx, block)?;
+
+        //TODO: actually try to get the receipts
+        Ok(Either::Left(num))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Either<L, R> {
+    Left(L),
+    Right(R),
 }
 
 /// Returns the (block number, block hash) key used to identify a block in the db
@@ -203,12 +238,11 @@ pub fn get_header_key<T: Into<BlockId> + Send + Sync, TX: TransactionKind, E: En
 ) -> Result<ak_tables::HeaderKey> {
     let (num, hash) = match id.into() {
         BlockId::Hash(hash) => {
-            let num = dbtx.read_header_number(hash)?.0.into();
+            let num = (*dbtx.read_header_number(hash)?).into();
             (num, hash)
         }
         BlockId::Number(id) => match id {
             EthersBlockNumber::Number(n) => (n, dbtx.read_canonical_hash(n.as_u64().into())?),
-            //TODO: check this https://github.com/ledgerwatch/erigon/blob/156da607e7495d709c141aec40f66a2556d35dc0/cmd/rpcdaemon/commands/rpc_block.go#L30
             EthersBlockNumber::Latest | EthersBlockNumber::Pending => {
                 let hash = dbtx.read_head_header_hash()?;
                 let num = dbtx.read_header_number(hash)?;
@@ -218,6 +252,21 @@ pub fn get_header_key<T: Into<BlockId> + Send + Sync, TX: TransactionKind, E: En
         },
     };
     Ok((num.as_u64().into(), hash))
+}
+
+pub fn res_block_number<T: Into<EthersBlockNumber>, TX: TransactionKind, E: EnvironmentKind>(
+    dbtx: &mut Reader<'_, TX, E>,
+    block: T,
+) -> Result<ak_models::BlockNumber> {
+    match block.into() {
+        EthersBlockNumber::Number(n) => Ok(n.as_u64().into()),
+        //TODO: check this https://github.com/ledgerwatch/erigon/blob/156da607e7495d709c141aec40f66a2556d35dc0/cmd/rpcdaemon/commands/rpc_block.go#L30
+        EthersBlockNumber::Latest | EthersBlockNumber::Pending => {
+            let hash = dbtx.read_head_header_hash()?;
+            dbtx.read_header_number(hash)
+        },
+        EthersBlockNumber::Earliest => Ok(0.into()),
+    }
 }
 
 #[cfg(test)]
@@ -235,7 +284,7 @@ mod tests {
         tests::TMP_DIR,
         utils::{BlockCast, MsgCast},
     };
-    use rand::{Rng, thread_rng};
+    use rand::{thread_rng, Rng};
 
     // helper for type inference
     pub fn client(path: PathBuf) -> Result<Client<mdbx::NoWriteMap>> {
@@ -372,7 +421,7 @@ mod tests {
         w.put_header_number(block_hash, block_num)?;
         w.put_header(block.header.clone())?;
         w.put_body_for_storage(block_hash, block.header.number, body_for_storage)?;
-        w.put_transactions( block.transactions.clone(), base_tx_id,)?;
+        w.put_transactions(block.transactions.clone(), base_tx_id)?;
         w.put_senders(block_hash, block_num, senders)?;
 
         // write ommer hashes to db and save them for checking the result

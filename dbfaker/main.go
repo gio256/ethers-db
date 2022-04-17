@@ -154,46 +154,6 @@ func PutSenders(dbPtr C.uintptr_t, hash []byte, num uint64, senders [][]byte) (e
 	return 1
 }
 
-//// See types/transaction_signing.go
-////export PutTransactionsWithSenders
-func PutTransactionsWithSenders(dbPtr C.uintptr_t, blockHash []byte, blockNum uint64, rlpTxs [][]byte, baseTxId uint64) (exit int) {
-	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
-
-	h := common.BytesToHash(blockHash)
-	txs, err := types.DecodeTransactions(rlpTxs)
-	if err != nil {
-		log.Error("DecodeTransactions", err)
-		return -1
-	}
-
-	dbtx, closer, err := begin(db)
-	if err != nil {
-		log.Error("tx begin", err)
-		return -1
-	}
-	defer closer(&err)
-
-	// skip 1 system tx at beginning of write
-	err = rawdb.WriteTransactions(dbtx, txs, baseTxId + 1)
-	if err != nil {
-		log.Error("WriteTransactions", err)
-		return -1
-	}
-
-    senders := make([]common.Address, len(txs))
-    for i, tx := range txs {
-        if sender, ok := tx.GetSender(); ok {
-            senders[i] = sender
-            llog.Printf("sender: %x", sender)
-        } else {
-            llog.Println("no good")
-        }
-    }
-    err = rawdb.WriteSenders(dbtx, h, blockNum, senders)
-
-	return 1
-}
-
 //export PutBodyForStorage
 func PutBodyForStorage(dbPtr C.uintptr_t, hash []byte, num uint64, bodyRlp []byte) (exit int) {
 	db := cgo.Handle(dbPtr).Value().(kv.RwDB)

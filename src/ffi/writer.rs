@@ -133,9 +133,7 @@ impl Writer {
         Ok(())
     }
 
-    pub fn put_senders<
-        T: IntoIterator<Item = ak_models::Address>,
-    >(
+    pub fn put_senders<T: IntoIterator<Item = ak_models::Address>>(
         &mut self,
         mut block_hash: H256,
         block_num: BlockNumber,

@@ -8,7 +8,7 @@ use mdbx::EnvironmentKind;
 use std::sync::Arc;
 use thiserror::Error;
 
-use crate::client::Client;
+use crate::client::{Either, Client};
 
 #[derive(Debug, Clone)]
 pub struct DbMiddleware<M, E: EnvironmentKind> {
@@ -63,6 +63,15 @@ where
     ) -> Result<U256, Self::Error> {
         let who = self.get_address(from).await?;
         self.db.get_balance(who, block).map_err(From::from)
+    }
+
+    async fn get_code<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        from: T,
+        block: Option<BlockId>,
+    ) -> Result<ethers::types::Bytes, Self::Error> {
+        let who = self.get_address(from).await?;
+        self.db.get_code(who, block).map_err(From::from)
     }
 
     async fn get_transaction_count<T: Into<NameOrAddress> + Send + Sync>(
@@ -130,6 +139,18 @@ where
         self.db
             .get_block_with_txs(block_hash_or_number)
             .map_err(From::from)
+    }
+
+    async fn get_block_receipts<T: Into<ethers::types::BlockNumber> + Send + Sync>(
+        &self,
+        block: T,
+    ) -> Result<Vec<ethers::types::TransactionReceipt>, Self::Error> {
+        match self.db.get_block_receipts(block)? {
+            // Receipts not in cache, delegate to inner
+            Either::Left(num) => self.inner().get_block_receipts(*num).await.map_err(FromErr::from),
+            // Got the receipts from the db, so return them
+            Either::Right(receipts) => Ok(receipts),
+        }
     }
 }
 
