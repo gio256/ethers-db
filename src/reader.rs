@@ -77,7 +77,6 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
         let mut body = <ak_models::BodyForStorage as Decodable>::decode(&mut &*raw_body)
             .map_err(|e| format_err!("BodyForStorage decode error: {}", e))?;
 
-        //TODO move this into read_body
         // Skip 1 system tx at the beginning of the block and 1 at the end
         // https://github.com/ledgerwatch/erigon/blob/f56d4c5881822e70f65927ade76ef05bfacb1df4/core/rawdb/accessors_chain.go#L602-L605
         body.base_tx_id.0 += 1;
@@ -102,14 +101,23 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
         Ok(u64::try_from(num)?.into())
     }
 
-    /// Returns a vector of `n` transactions beginning at `start_key`, propgating
-    /// any error encountered in reading the requested transactions.
+    /// Returns a vector of `n` transactions beginning at `start_key`, propogating
+    /// any error encountered in reading the requested transactions. If less than
+    /// the expected number of transactions were read (e.g. if there were fewer than
+    /// expected in the db), an error is returned.
     pub fn read_transactions(
         &mut self,
         start_key: u64,
         n: usize,
     ) -> Result<Vec<ak_models::MessageWithSignature>> {
-        self.stream_transactions(start_key)?.take(n).collect()
+        let res = self
+            .stream_transactions(start_key)?
+            .take(n)
+            .collect::<Result<Vec<_>>>()?;
+        if res.len() != n {
+            anyhow::bail!("Could not read {} transactions from start key {:x}. Got {}", n, start_key, res.len())
+        }
+        Ok(res)
     }
 
     /// Returns an iterator over transaction reads beginning at `start_key`
@@ -132,7 +140,8 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
 
     /// Returns an iterator over transactions beginning at `start_key`. Any errors
     /// in reading or decoding transactions will be discarded. The caller must check
-    /// the length of the resulting collection if errant reads need to be handled.
+    /// the length of the resulting collection if errant reads need to be handled, or
+    /// if exactly `n` transactions are needed.
     pub fn try_stream_transactions(
         &mut self,
         start_key: u64,
@@ -155,6 +164,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     pub fn read_canonical_hash(&mut self, num: ak_models::BlockNumber) -> Result<H256> {
         self.0
             .get(ak_tables::CanonicalHeader, num)
+            // .ok_or(format_err!("read_canonical_hash not found"))
             .map(|res| res.unwrap_or_default())
     }
 

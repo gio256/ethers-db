@@ -7,7 +7,7 @@ use mdbx::{EnvironmentKind, TransactionKind};
 use std::path::PathBuf;
 
 use crate::reader::Reader;
-use crate::utils::{open_db, MsgCast};
+use crate::utils::{open_db, BlockCast, MsgCast};
 
 #[derive(Debug)]
 pub struct Client<E: EnvironmentKind>(MdbxEnvironment<E>);
@@ -119,23 +119,29 @@ impl<E: EnvironmentKind> Client<E> {
         let header = dbtx.read_header(header_key)?;
         let body = dbtx.read_body_for_storage(header_key)?;
 
+        let tx_amt: usize = body.tx_amount.try_into()?;
         let txs = dbtx
             .stream_transactions(body.base_tx_id.0)?
             .map(|msg| Ok(msg?.hash()))
             .take(body.tx_amount.try_into()?)
             .collect::<Result<Vec<_>>>()?;
 
+        if txs.len() != tx_amt {
+            return Err(format_err!(
+                "Failed to get some txs in block {}. Expected: {}. Got {}",
+                block_num,
+                tx_amt,
+                txs.len()
+            ));
+        }
+
         let ommer_hashes = body
             .uncles
             .iter()
-            .map(|header| {
-                let (_, hash) =
-                    get_header_key(&mut dbtx, header.number.0).expect("no match for ommer");
-                hash
-            })
-            .collect();
+            .map(|header| dbtx.read_canonical_hash(header.number))
+            .collect::<Result<Vec<_>>>()?;
 
-        let block = crate::utils::BlockCast(&header).cast(txs, block_num, block_hash, ommer_hashes);
+        let block = BlockCast(&header).cast(txs, block_num, block_hash, ommer_hashes);
         Ok(Some(block))
     }
 
@@ -176,12 +182,8 @@ impl<E: EnvironmentKind> Client<E> {
         let ommer_hashes = body
             .uncles
             .iter()
-            .map(|header| {
-                let (_, hash) =
-                    get_header_key(&mut dbtx, header.number.0).expect("no match for ommer");
-                hash
-            })
-            .collect();
+            .map(|header| dbtx.read_canonical_hash(header.number))
+            .collect::<Result<Vec<_>>>()?;
 
         let block = crate::utils::BlockCast(&header).cast(txs, block_num, block_hash, ommer_hashes);
         Ok(Some(block))
@@ -214,14 +216,18 @@ pub fn get_header_key<T: Into<BlockId> + Send + Sync, TX: TransactionKind, E: En
 
 #[cfg(test)]
 mod tests {
-    use akula::models::{BodyForStorage, MessageWithSignature, H256};
+    use akula::models::{Block, BodyForStorage, MessageWithSignature, H256};
     use anyhow::Result;
     use ethers::{core::types::Address, utils::keccak256};
     use std::path::PathBuf;
 
     use super::Client;
     use crate::{
-        account::Account, ffi::writer::Writer, rand::Rand, tests::TMP_DIR, utils::MsgCast,
+        account::Account,
+        ffi::writer::Writer,
+        rand::{rand_vec, Rand},
+        tests::TMP_DIR,
+        utils::{BlockCast, MsgCast},
     };
     use rand::thread_rng;
 
@@ -333,12 +339,63 @@ mod tests {
     }
 
     #[test]
-    fn test_get_header_key() -> Result<()> {
+    fn test_get_block() -> Result<()> {
+        let mut rng = thread_rng();
+        let mut block = Block::rand(&mut rng);
+        block.transactions = rand_vec(&mut rng, 5);
+        block.ommers = rand_vec(&mut rng, 5);
+        let body_for_storage = BodyForStorage {
+            base_tx_id: Rand::rand(&mut rng),
+            tx_amount: (block.transactions.len() + 2).try_into()?,
+            uncles: block.ommers.clone(),
+        };
+        let base_tx_id = *body_for_storage.base_tx_id;
+        let block_hash = block.header.hash();
+        let block_num = block.header.number;
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        w.put_header_number(block_hash, block_num)?;
+        w.put_header(block.header.clone())?;
+        w.put_body_for_storage(block_hash, block.header.number, body_for_storage)?;
+        w.put_transactions(block.transactions.clone(), base_tx_id)?;
+
+        // write ommer hashes to db and save them for checking the result
+        let mut ommer_hashes = vec![];
+        for ommer in block.ommers.clone() {
+            ommer_hashes.push(ommer.hash());
+            w.put_canonical_hash(ommer.hash(), ommer.number)?;
+        }
+
+        let path = w.close()?;
+        let db = client(path)?;
+
+        // test get_block_with_txs
+        let res = db.get_block_with_txs(block_hash)?;
+        let expected_txs = block
+            .transactions
+            .iter()
+            .zip(0..)
+            .map(|(tx, i)| MsgCast::new(tx).cast(block_num, block_hash, i))
+            .collect();
+        let expected = BlockCast(&block.header).cast(
+            expected_txs,
+            block_num,
+            block_hash,
+            ommer_hashes.clone(),
+        );
+        assert_eq!(res, Some(expected));
+
+        // test get_block
+        let res = db.get_block(block_hash)?;
+        let expected_txs = block.transactions.iter().map(|tx| tx.hash()).collect();
+        let expected =
+            BlockCast(&block.header).cast(expected_txs, block_num, block_hash, ommer_hashes);
+        assert_eq!(res, Some(expected));
         Ok(())
     }
 
     #[test]
-    fn test_get_block() -> Result<()> {
-        anyhow::bail!("not implemented")
+    fn test_get_header_key() -> Result<()> {
+        Ok(())
     }
 }

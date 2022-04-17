@@ -7,7 +7,6 @@ import "C"
 import "runtime/cgo"
 import (
 	"context"
-	// llog "log"
 
 	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/erigon-lib/kv"
