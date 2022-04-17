@@ -16,14 +16,11 @@ pub struct DbMiddleware<M, E: EnvironmentKind> {
     db: Arc<Client<E>>,
 }
 
-// impl<M, E: EnvironmentKind> DbMiddleware<M, E> {
-//     pub fn new(inner: M, db: Arc<MdbxEnvironment<E>>) -> Self {
-//         Self {
-//             inner,
-//             db,
-//         }
-//     }
-// }
+impl<M, E: EnvironmentKind> DbMiddleware<M, E> {
+    pub fn new(inner: M, db: Arc<Client<E>>) -> Self {
+        Self { inner, db }
+    }
+}
 
 impl<M, E> DbMiddleware<M, E>
 where

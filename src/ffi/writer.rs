@@ -133,6 +133,38 @@ impl Writer {
         Ok(())
     }
 
+    pub fn put_senders<
+        T: IntoIterator<Item = ak_models::Address>,
+    >(
+        &mut self,
+        mut block_hash: H256,
+        block_num: BlockNumber,
+        senders: T,
+    ) -> Result<()> {
+        let mut bufs = vec![];
+        for s in senders.into_iter() {
+            let mut buf = BytesMut::new();
+            s.encode(&mut buf);
+            bufs.push(buf);
+        }
+        let mut go_slices = vec![];
+        for buf in bufs.iter_mut() {
+            go_slices.push(GoSlice::from(buf))
+        }
+
+        let exit = unsafe {
+            PutSenders(
+                self.db_ptr,
+                (&mut block_hash).into(),
+                *block_num,
+                GoSlice::from(&mut go_slices[..]),
+            )
+        };
+        exit.ok_or_fmt("PutSenders")?;
+
+        Ok(())
+    }
+
     pub fn put_body_for_storage(
         &mut self,
         mut hash: H256,

@@ -7,6 +7,7 @@ import "C"
 import "runtime/cgo"
 import (
 	"context"
+	// llog "log"
 
 	"github.com/holiman/uint256"
 	"github.com/ledgerwatch/erigon-lib/kv"
@@ -121,6 +122,74 @@ func PutTransactions(dbPtr C.uintptr_t, rlpTxs [][]byte, baseTxId uint64) (exit 
 		log.Error("WriteTransactions", err)
 		return -1
 	}
+
+	return 1
+}
+
+//export PutSenders
+func PutSenders(dbPtr C.uintptr_t, hash []byte, num uint64, senders [][]byte) (exit int) {
+	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
+
+	h := common.BytesToHash(hash)
+
+	addresses := make([]common.Address, len(senders))
+	for i, sender := range senders {
+		a := common.BytesToAddress(sender)
+		addresses[i] = a
+	}
+
+	dbtx, closer, err := begin(db)
+	if err != nil {
+		log.Error("tx begin", err)
+		return -1
+	}
+	defer closer(&err)
+
+	err = rawdb.WriteSenders(dbtx, h, num, addresses)
+	if err != nil {
+		log.Error("WriteSenders", err)
+		return -1
+	}
+
+	return 1
+}
+
+//// See types/transaction_signing.go
+////export PutTransactionsWithSenders
+func PutTransactionsWithSenders(dbPtr C.uintptr_t, blockHash []byte, blockNum uint64, rlpTxs [][]byte, baseTxId uint64) (exit int) {
+	db := cgo.Handle(dbPtr).Value().(kv.RwDB)
+
+	h := common.BytesToHash(blockHash)
+	txs, err := types.DecodeTransactions(rlpTxs)
+	if err != nil {
+		log.Error("DecodeTransactions", err)
+		return -1
+	}
+
+	dbtx, closer, err := begin(db)
+	if err != nil {
+		log.Error("tx begin", err)
+		return -1
+	}
+	defer closer(&err)
+
+	// skip 1 system tx at beginning of write
+	err = rawdb.WriteTransactions(dbtx, txs, baseTxId + 1)
+	if err != nil {
+		log.Error("WriteTransactions", err)
+		return -1
+	}
+
+    senders := make([]common.Address, len(txs))
+    for i, tx := range txs {
+        if sender, ok := tx.GetSender(); ok {
+            senders[i] = sender
+            llog.Printf("sender: %x", sender)
+        } else {
+            llog.Println("no good")
+        }
+    }
+    err = rawdb.WriteSenders(dbtx, h, blockNum, senders)
 
 	return 1
 }

@@ -99,7 +99,7 @@ impl<E: EnvironmentKind> Client<E> {
         let body = dbtx.read_body_for_storage(header_key)?;
         let idx = idx.as_usize();
         if idx < body.uncles.len() {
-            self.get_block(body.uncles[idx].number.0)
+            self.get_block(*body.uncles[idx].number)
         } else {
             Ok(None)
         }
@@ -157,12 +157,18 @@ impl<E: EnvironmentKind> Client<E> {
         let header = dbtx.read_header(header_key)?;
         let body = dbtx.read_body_for_storage(header_key)?;
 
+        // We may not have all signers in the db, in which case we get zero
+        // addresses and have to recover the signatures
+        let senders = dbtx.read_senders(header_key)?;
+
         // try_stream_transactions so we can cast the txs as we read them
         let tx_amt = body.tx_amount.try_into()?;
         let txs = dbtx
-            .try_stream_transactions(body.base_tx_id.0, tx_amt)?
+            .try_stream_transactions(*body.base_tx_id, tx_amt)?
             .scan(0_usize, |idx, msg| {
-                let tx = MsgCast::new(&msg).cast(block_num, block_hash, *idx);
+                let tx = MsgCast::new(&msg)
+                    .maybe_signer(senders[*idx])
+                    .cast(block_num, block_hash, *idx);
                 *idx += 1;
                 Some(tx)
             })
@@ -229,7 +235,7 @@ mod tests {
         tests::TMP_DIR,
         utils::{BlockCast, MsgCast},
     };
-    use rand::thread_rng;
+    use rand::{Rng, thread_rng};
 
     // helper for type inference
     pub fn client(path: PathBuf) -> Result<Client<mdbx::NoWriteMap>> {
@@ -353,11 +359,21 @@ mod tests {
         let block_hash = block.header.hash();
         let block_num = block.header.number;
 
+        // make our stored senders list spotty, so some need to be recovered
+        let senders = block.transactions.as_slice().iter().map(|t| {
+            if rng.gen() {
+                t.recover_sender().expect("bad sig")
+            } else {
+                Default::default()
+            }
+        });
+
         let mut w = Writer::open(TMP_DIR.clone())?;
         w.put_header_number(block_hash, block_num)?;
         w.put_header(block.header.clone())?;
         w.put_body_for_storage(block_hash, block.header.number, body_for_storage)?;
-        w.put_transactions(block.transactions.clone(), base_tx_id)?;
+        w.put_transactions( block.transactions.clone(), base_tx_id,)?;
+        w.put_senders(block_hash, block_num, senders)?;
 
         // write ommer hashes to db and save them for checking the result
         let mut ommer_hashes = vec![];

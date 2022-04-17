@@ -159,10 +159,11 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     }
 
     /// Returns the signers of each transaction in the block.
+    /// If the block or the signers are not in the db, returns zero addresses.
     pub fn read_senders(&mut self, key: ak_tables::HeaderKey) -> Result<Vec<Address>> {
         self.0
-            .get(ak_tables::TxSender, key)?
-            .ok_or_else(|| format_err!("read_senders"))
+            .get(ak_tables::TxSender, key)
+            .map(|res| res.unwrap_or_default())
     }
 
     /// Returns the hash assigned to a canonical block number.

@@ -38,8 +38,19 @@ impl<'a> MsgCast<'a> {
     pub fn new_with_src(msg: &'a MessageWithSignature, src: Address) -> Self {
         Self {
             msg,
-            src: Some(src),
+            src: if src == Default::default() {
+                None
+            } else {
+                Some(src)
+            },
         }
+    }
+
+    pub fn maybe_signer(&mut self, src: Address) -> &mut Self {
+        if src != Default::default() {
+            self.src = Some(src)
+        }
+        self
     }
 
     pub fn cast(
