@@ -62,6 +62,10 @@ where
         block: Option<BlockId>,
     ) -> Result<U256, Self::Error> {
         let who = self.get_address(from).await?;
+        if block.is_some() {
+            return self.inner().get_balance(who, block).await.map_err(FromErr::from)
+        }
+
         self.db.get_balance(who, block).map_err(From::from)
     }
 
@@ -71,6 +75,10 @@ where
         block: Option<BlockId>,
     ) -> Result<ethers::types::Bytes, Self::Error> {
         let who = self.get_address(from).await?;
+        if block.is_some() {
+            return self.inner().get_code(who, block).await.map_err(FromErr::from)
+        }
+
         self.db.get_code(who, block).map_err(From::from)
     }
 
@@ -80,6 +88,10 @@ where
         block: Option<BlockId>,
     ) -> Result<U256, Self::Error> {
         let who = self.get_address(from).await?;
+        if block.is_some() {
+            return self.inner().get_transaction_count(who, block).await.map_err(FromErr::from)
+        }
+
         self.db
             .get_transaction_count(who, block)
             .map_err(From::from)
@@ -101,6 +113,10 @@ where
         block: Option<BlockId>,
     ) -> Result<H256, Self::Error> {
         let who = self.get_address(from).await?;
+        if block.is_some() {
+            return self.inner().get_storage_at(who, location, block).await.map_err(FromErr::from)
+        }
+
         self.db
             .get_storage_at(who, location, block)
             .map_err(From::from)

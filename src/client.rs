@@ -190,7 +190,7 @@ impl<E: EnvironmentKind> Client<E> {
             })
             .collect::<Vec<_>>();
 
-        // If we failed to read any txs, they were discarded, so make sure we got them all
+        // Check that no txs were discarded (e.g. if they failed to decode)
         if txs.len() != tx_amt {
             return Err(format_err!(
                 "Failed to get some txs in block {}. Expected: {}. Got {}",
@@ -211,8 +211,9 @@ impl<E: EnvironmentKind> Client<E> {
         Ok(Some(block))
     }
 
-    // Either gets the receipts from the db (if they're cached) or returns the
-    // resolved block number
+    /// Returns the receipts for the block if they are stored in the db. If they
+    /// are not, erigon would attempt to reconstruct them. In this case, the block
+    /// number is returned so the caller can attempt to get the receipts over rpc.
     pub fn get_block_receipts<T: Into<EthersBlockNumber> + Send + Sync>(
         &self,
         block: T,
