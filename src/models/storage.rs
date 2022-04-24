@@ -1,9 +1,8 @@
-use ethers::types::{Address, H256};
+use ethers::types::Address;
 
 const ADDRESS_LENGTH: usize = Address::len_bytes();
 const U64_LENGTH: usize = std::mem::size_of::<u64>();
 
-// Custom table for storage because it overlaps with PlainState
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct StorageBucket {
     pub address: Address,
@@ -33,20 +32,4 @@ impl akula::kv::TableDecode for StorageBucket {
     fn decode(_enc: &[u8]) -> anyhow::Result<Self> {
         Ok(Default::default())
     }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Storage;
-
-impl akula::kv::Table for Storage {
-    type Key = StorageBucket;
-    type SeekKey = StorageBucket;
-    type Value = (H256, akula::models::U256);
-
-    fn db_name(&self) -> string::String<bytes::Bytes> {
-        string::String::from_str("PlainState")
-    }
-}
-impl akula::kv::DupSort for Storage {
-    type SeekBothKey = H256;
 }

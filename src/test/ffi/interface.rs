@@ -1,4 +1,4 @@
-use crate::account::Account;
+use crate::models::Account;
 use akula::models::RlpAccount;
 use ethers::types::{Address, H256, U256};
 use libc::{c_void, uintptr_t};

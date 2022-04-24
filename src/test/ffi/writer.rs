@@ -1,4 +1,4 @@
-use crate::account::Account;
+use crate::models::Account;
 use akula::models::{self as ak_models, BlockHeader, BlockNumber, BodyForStorage, RlpAccount};
 use anyhow::Result;
 use bytes::BytesMut;

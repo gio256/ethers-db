@@ -10,7 +10,7 @@ use fastrlp::Decodable;
 use mdbx::{EnvironmentKind, TransactionKind};
 use once_cell::sync::Lazy;
 
-use crate::{account::Account, tables};
+use crate::{models::Account, tables};
 
 pub static EMPTY_CODEHASH: Lazy<H256> = Lazy::new(|| ethers::utils::keccak256(vec![]).into());
 
@@ -202,7 +202,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
         incarnation: u64,
         key: H256,
     ) -> Result<H256> {
-        let bucket = crate::storage::StorageBucket::new(who, incarnation);
+        let bucket = crate::models::StorageBucket::new(who, incarnation);
         let mut cur = self.0.cursor(tables::Storage)?;
 
         if let Some((k, v)) = cur.seek_both_range(bucket, key)? {
@@ -221,7 +221,7 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
         who: Address,
         incarnation: u64,
     ) -> Result<impl Iterator<Item = Result<(ak_models::H256, ak_models::U256)>>> {
-        let start_key = crate::storage::StorageBucket::new(who, incarnation);
+        let start_key = crate::models::StorageBucket::new(who, incarnation);
         Ok(self.0.cursor(tables::Storage)?.walk_dup(start_key))
     }
 
@@ -277,7 +277,9 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{
-        account::Account, client::Client, ffi::writer::Writer, rand::Rand, tests::TMP_DIR,
+        client::Client,
+        models::Account,
+        test::{ffi::writer::Writer, rand::Rand, TMP_DIR},
     };
 
     // helper for type inference
@@ -439,9 +441,9 @@ mod tests {
         let mut rng = thread_rng();
         let who = Rand::rand(&mut rng);
         let n = 5;
-        let mut keys = crate::rand::rand_vec(&mut rng, n);
+        let mut keys = crate::test::rand::rand_vec(&mut rng, n);
         keys.sort();
-        let vals = crate::rand::rand_vec(&mut rng, n);
+        let vals = crate::test::rand::rand_vec(&mut rng, n);
         let mut kv = keys.into_iter().zip(vals);
 
         let mut w = Writer::open(TMP_DIR.clone())?;

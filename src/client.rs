@@ -279,10 +279,12 @@ mod tests {
 
     use super::Client;
     use crate::{
-        account::Account,
-        ffi::writer::Writer,
-        rand::{rand_vec, Rand},
-        tests::TMP_DIR,
+        models::Account,
+        test::{
+            ffi::writer::Writer,
+            rand::{rand_vec, Rand},
+            TMP_DIR,
+        },
         utils::{BlockCast, MsgCast},
     };
     use rand::{thread_rng, Rng};
