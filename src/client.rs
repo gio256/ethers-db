@@ -274,7 +274,7 @@ pub fn res_block_number<T: Into<EthersBlockNumber>, TX: TransactionKind, E: Envi
 mod tests {
     use akula::models::{Block, BodyForStorage, MessageWithSignature, H256};
     use anyhow::Result;
-    use ethers::{core::types::Address, utils::keccak256};
+    use ethers::utils::keccak256;
     use std::path::PathBuf;
 
     use super::Client;

@@ -28,6 +28,12 @@ impl akula::kv::TableEncode for StorageBucket {
         out
     }
 }
+//TODO: dummy impl as we only need to encode for now, but need the trait bound
+impl akula::kv::TableDecode for StorageBucket {
+    fn decode(_enc: &[u8]) -> anyhow::Result<Self> {
+        Ok(Default::default())
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Storage;

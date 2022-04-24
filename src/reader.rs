@@ -5,7 +5,7 @@ use akula::{
     models as ak_models,
 };
 use anyhow::{format_err, Result};
-use ethers::core::types::{Address, BlockId, BlockNumber as EthersBlockNumber, H256};
+use ethers::core::types::{Address, H256};
 use fastrlp::Decodable;
 use mdbx::{EnvironmentKind, TransactionKind};
 use once_cell::sync::Lazy;
@@ -214,6 +214,17 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
         Ok(Default::default())
     }
 
+    /// Returns an iterator over all of the storage (key, value) pairs for the
+    /// given address and account incarnation.
+    pub fn walk_account_storage(
+        &mut self,
+        who: Address,
+        incarnation: u64,
+    ) -> Result<impl Iterator<Item = Result<(ak_models::H256, ak_models::U256)>>> {
+        let start_key = crate::storage::StorageBucket::new(who, incarnation);
+        Ok(self.0.cursor(tables::Storage)?.walk_dup(start_key))
+    }
+
     /// Returns the incarnation of the account when it was last deleted.
     /// If the account is not in the db, returns 0.
     pub fn read_last_incarnation(&mut self, who: Address) -> Result<u64> {
@@ -419,6 +430,42 @@ mod tests {
         for hash in tx_hashes {
             let read = dbtx.read_transaction_block_number(hash).unwrap();
             assert_eq!(read, block_num);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_walk_storage() -> Result<()> {
+        let mut rng = thread_rng();
+        let who = Rand::rand(&mut rng);
+        let n = 5;
+        let mut keys = crate::rand::rand_vec(&mut rng, n);
+        keys.sort();
+        let vals = crate::rand::rand_vec(&mut rng, n);
+        let mut kv = keys.into_iter().zip(vals);
+
+        let mut w = Writer::open(TMP_DIR.clone())?;
+        for (k, v) in kv.clone() {
+            w.put_storage(who, k, v)?;
+        }
+        // shouldn't get storage value from a different account
+        w.put_storage(
+            Rand::rand(&mut rng),
+            Rand::rand(&mut rng),
+            Rand::rand(&mut rng),
+        )?;
+        let path = w.close()?;
+
+        let db = client(path)?;
+        let mut dbtx = db.reader()?;
+        let read = dbtx.walk_account_storage(who, 0)?;
+
+        for r in read {
+            let (key, val) = r?;
+            let (k, v) = kv.next().unwrap();
+            let v = ak_models::U256::from_be_bytes(v.to_fixed_bytes());
+            assert_eq!(val, v);
+            assert_eq!(key, k);
         }
         Ok(())
     }
