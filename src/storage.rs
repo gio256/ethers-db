@@ -4,7 +4,7 @@ const ADDRESS_LENGTH: usize = Address::len_bytes();
 const U64_LENGTH: usize = std::mem::size_of::<u64>();
 
 // Custom table for storage because it overlaps with PlainState
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct StorageBucket {
     pub address: Address,
     pub incarnation: u64,

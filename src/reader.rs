@@ -154,8 +154,8 @@ impl<'env, K: TransactionKind, E: EnvironmentKind> Reader<'env, K, E> {
     ) -> Result<impl Iterator<Item = ak_models::MessageWithSignature>> {
         Ok(self
             .stream_transactions(start_key)?
-            .flatten()
-            .take(n.try_into()?))
+            .take(n.try_into()?)
+            .flatten())
     }
 
     /// Returns the signers of each transaction in the block.

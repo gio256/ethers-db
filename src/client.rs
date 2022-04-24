@@ -265,7 +265,7 @@ pub fn res_block_number<T: Into<EthersBlockNumber>, TX: TransactionKind, E: Envi
         EthersBlockNumber::Latest | EthersBlockNumber::Pending => {
             let hash = dbtx.read_head_header_hash()?;
             dbtx.read_header_number(hash)
-        },
+        }
         EthersBlockNumber::Earliest => Ok(0.into()),
     }
 }

@@ -8,7 +8,7 @@ use mdbx::EnvironmentKind;
 use std::sync::Arc;
 use thiserror::Error;
 
-use crate::client::{Either, Client};
+use crate::client::{Client, Either};
 
 #[derive(Debug, Clone)]
 pub struct DbMiddleware<M, E: EnvironmentKind> {
@@ -63,7 +63,11 @@ where
     ) -> Result<U256, Self::Error> {
         let who = self.get_address(from).await?;
         if block.is_some() {
-            return self.inner().get_balance(who, block).await.map_err(FromErr::from)
+            return self
+                .inner()
+                .get_balance(who, block)
+                .await
+                .map_err(FromErr::from);
         }
 
         self.db.get_balance(who, block).map_err(From::from)
@@ -76,7 +80,11 @@ where
     ) -> Result<ethers::types::Bytes, Self::Error> {
         let who = self.get_address(from).await?;
         if block.is_some() {
-            return self.inner().get_code(who, block).await.map_err(FromErr::from)
+            return self
+                .inner()
+                .get_code(who, block)
+                .await
+                .map_err(FromErr::from);
         }
 
         self.db.get_code(who, block).map_err(From::from)
@@ -89,7 +97,11 @@ where
     ) -> Result<U256, Self::Error> {
         let who = self.get_address(from).await?;
         if block.is_some() {
-            return self.inner().get_transaction_count(who, block).await.map_err(FromErr::from)
+            return self
+                .inner()
+                .get_transaction_count(who, block)
+                .await
+                .map_err(FromErr::from);
         }
 
         self.db
@@ -114,7 +126,11 @@ where
     ) -> Result<H256, Self::Error> {
         let who = self.get_address(from).await?;
         if block.is_some() {
-            return self.inner().get_storage_at(who, location, block).await.map_err(FromErr::from)
+            return self
+                .inner()
+                .get_storage_at(who, location, block)
+                .await
+                .map_err(FromErr::from);
         }
 
         self.db
@@ -163,7 +179,11 @@ where
     ) -> Result<Vec<ethers::types::TransactionReceipt>, Self::Error> {
         match self.db.get_block_receipts(block)? {
             // Receipts not in cache, delegate to inner
-            Either::Left(num) => self.inner().get_block_receipts(*num).await.map_err(FromErr::from),
+            Either::Left(num) => self
+                .inner()
+                .get_block_receipts(*num)
+                .await
+                .map_err(FromErr::from),
             // Got the receipts from the db, so return them
             Either::Right(receipts) => Ok(receipts),
         }
